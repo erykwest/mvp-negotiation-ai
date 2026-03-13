@@ -1,1 +1,7 @@
 repo-to-text_*.txt
+
+__pycache__/
+*.pyc
+.env
+data/*.json
+data/*.json

@@ -1,0 +1,74 @@
+.
+├── .github
+│   └── workflows
+├── .gitignore
+├── LICENSE
+├── README.md
+├── admin_app.py
+├── app
+│   ├── backend
+│   ├── frontend
+│   ├── main.py
+│   ├── pages
+│   │   ├── 01_input.py
+│   │   ├── 02_rounds.py
+│   │   └── 03_report.py
+│   └── shared
+├── candidate_app.py
+├── company_app.py
+├── core
+│   ├── __init__.py
+│   ├── llm_client.py
+│   ├── negotiation.py
+│   ├── report.py
+│   └── storage.py
+├── data
+│   └── session_001.json
+├── docs
+│   ├── 00_MASTER_CONTEXT.md
+│   ├── 01_VISION.md
+│   ├── 02_PRD_MVP.md
+│   ├── 03_USER_STORIES.md
+│   ├── 04_APP_FLOW.md
+│   ├── 05_DOMAIN_MODEL.md
+│   ├── 06_NEGOTIATION_PROTOCOL.md
+│   ├── 07_PROMPT_STRATEGY.md
+│   ├── 08_UI_SCREENS.md
+│   ├── 09_ARCHITECTURE.md
+│   ├── 10_API_CONTRACTS.md
+│   ├── 11_DECISIONS_ADR.md
+│   ├── 12_BUG_LOG.md
+│   ├── 13_CHANGELOG.md
+│   └── 14_BACKLOG.md
+├── product
+│   ├── examples
+│   │   ├── sample_candidate_profile.md
+│   │   ├── sample_company_profile.md
+│   │   └── sample_job_description.md
+│   └── templates
+│       ├── negotiation_template_recruiting.json
+│       └── section_template_recruiting.json
+├── prompts
+│   ├── evals
+│   │   ├── failure_cases.md
+│   │   └── good_cases.md
+│   ├── system
+│   │   ├── alignment_agent.md
+│   │   ├── negotiator_candidate.md
+│   │   ├── negotiator_company.md
+│   │   ├── report_agent.md
+│   │   └── rfi_agent.md
+│   └── templates
+│       ├── round1_alignment.md
+│       ├── round2_requests.md
+│       ├── round3_agreement.md
+│       └── round4_last_call.md
+├── repo-to-text_2026-03-13-12-02-12-UTC.txt
+├── repo_tree.txt
+├── requirements.txt
+└── tests
+    ├── api
+    ├── flows
+    └── prompts
+
+22 directories, 50 files

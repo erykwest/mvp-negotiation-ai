@@ -15,8 +15,8 @@ def build_report(data: dict, results: dict) -> str:
     lines.append(data.get("job_description", "_Nessun contenuto_"))
     lines.append("")
     lines.append("## Parti")
-    lines.append(f"- Azienda: **{company.get('name', '-') }**")
-    lines.append(f"- Candidato: **{candidate.get('name', '-') }**")
+    lines.append(f"- Azienda: **{company.get('name', '-')}**")
+    lines.append(f"- Candidato: **{candidate.get('name', '-')}**")
     lines.append("")
 
     for phase in ["ALIGNMENT", "NEGOTIATION", "CLOSING"]:
@@ -38,6 +38,12 @@ def build_report(data: dict, results: dict) -> str:
         lines.append("### Sintesi")
         lines.append(round_content.get("summary", "_Nessun contenuto_"))
         lines.append("")
+
+        if phase in ["NEGOTIATION", "CLOSING"] and data.get("dynamic_topics"):
+            lines.append("### Topic aggiuntivi round 2")
+            for t in data["dynamic_topics"]:
+                lines.append(f"- [{t['section']}] {t['title']}")
+            lines.append("")
 
     lines.append("---")
     lines.append("")

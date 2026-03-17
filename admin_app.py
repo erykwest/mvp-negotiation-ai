@@ -1,13 +1,14 @@
 import streamlit as st
+from core.negotiation import run_single_round
+from core.report import build_report
 from core.storage import (
     load_state,
     is_ready,
     save_round_result,
     advance_phase,
     reset_workflow,
+    dynamic_topics_complete,
 )
-from core.negotiation import run_single_round
-from core.report import build_report
 
 PHASE_LABELS = {
     "ALIGNMENT": "ROUND 1 · ALIGNMENT",
@@ -53,17 +54,30 @@ with col2:
         st.rerun()
 
 if status == "review":
-    st.success("Round completato. Ora gli umani possono aggiornare input e priorità prima del round successivo.")
+    st.success(
+        "Round completato. Ora gli umani possono aggiornare input e priorità prima del round successivo."
+    )
 
     current_result = load_state()["results"].get(current_phase)
     if current_result:
-        with st.expander(f"{PHASE_LABELS.get(current_phase, current_phase)} · risultato corrente", expanded=True):
+        with st.expander(
+            f"{PHASE_LABELS.get(current_phase, current_phase)} · risultato corrente",
+            expanded=True
+        ):
             st.markdown(current_result["summary"])
 
     if current_phase != "CLOSING":
-        if st.button("Apri round successivo"):
-            advance_phase()
-            st.rerun()
+        can_advance = True
+        if current_phase == "NEGOTIATION" and not dynamic_topics_complete(load_state()):
+            can_advance = False
+            st.error(
+                "Prima del Round 3 tutti i topic aggiuntivi del Round 2 devono avere risposta da entrambe le parti."
+            )
+
+        if can_advance:
+            if st.button("Apri round successivo"):
+                advance_phase()
+                st.rerun()
     else:
         st.info("Closing completato. Puoi scaricare il report finale.")
 

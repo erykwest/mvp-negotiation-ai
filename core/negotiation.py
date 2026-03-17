@@ -17,10 +17,33 @@ def format_priorities(priorities: dict, side: str) -> str:
     return "\n".join(lines)
 
 
+def format_dynamic_topics(dynamic_topics: list) -> str:
+    if not dynamic_topics:
+        return "Nessun topic aggiuntivo."
+
+    lines = []
+    for t in dynamic_topics:
+        lines.append(
+            f"- [{t['section']}] {t['title']}\n"
+            f"  - azienda: {t.get('company_answer', '-')}\n"
+            f"  - candidato: {t.get('candidate_answer', '-')}"
+        )
+    return "\n".join(lines)
+
+
 def build_company_prompt(data: dict, phase: str) -> str:
     company = data["company"]
     candidate = data["candidate"]
     priorities = data.get("priorities", {})
+    dynamic_topics = data.get("dynamic_topics", [])
+
+    dynamic_block = ""
+    if phase in ["NEGOTIATION", "CLOSING"]:
+        dynamic_block = f"""
+
+TOPIC AGGIUNTIVI ROUND 2:
+{format_dynamic_topics(dynamic_topics)}
+"""
 
     return f"""
 FASE: {phase}
@@ -51,7 +74,7 @@ PRIORITÀ AZIENDA:
 {format_priorities(priorities, "company")}
 
 PRIORITÀ CANDIDATO:
-{format_priorities(priorities, "candidate")}
+{format_priorities(priorities, "candidate")}{dynamic_block}
 
 ISTRUZIONI:
 - Scrivi in modo sintetico e professionale.
@@ -67,6 +90,15 @@ def build_candidate_prompt(data: dict, phase: str) -> str:
     company = data["company"]
     candidate = data["candidate"]
     priorities = data.get("priorities", {})
+    dynamic_topics = data.get("dynamic_topics", [])
+
+    dynamic_block = ""
+    if phase in ["NEGOTIATION", "CLOSING"]:
+        dynamic_block = f"""
+
+TOPIC AGGIUNTIVI ROUND 2:
+{format_dynamic_topics(dynamic_topics)}
+"""
 
     return f"""
 FASE: {phase}
@@ -97,7 +129,7 @@ PRIORITÀ AZIENDA:
 {format_priorities(priorities, "company")}
 
 PRIORITÀ CANDIDATO:
-{format_priorities(priorities, "candidate")}
+{format_priorities(priorities, "candidate")}{dynamic_block}
 
 ISTRUZIONI:
 - Scrivi in modo sintetico e professionale.
@@ -154,6 +186,7 @@ REGOLE:
 - massimo 180 parole
 """.strip()
 
+
 def safe_ask(prompt: str) -> str:
     try:
         return ask_llm(prompt)
@@ -161,30 +194,6 @@ def safe_ask(prompt: str) -> str:
         return f"ERRORE LLM: {exc}"
 
 
-def run_rounds(data: dict) -> dict:
-    phases = ["ALIGNMENT", "NEGOTIATION", "CLOSING"]
-    results = {}
-
-    for phase in phases:
-        company_prompt = build_company_prompt(data, phase)
-        candidate_prompt = build_candidate_prompt(data, phase)
-
-        company_response = safe_ask(company_prompt)
-        candidate_response = safe_ask(candidate_prompt)
-
-        summary_prompt = build_summary_prompt(
-            phase, company_response, candidate_response
-        )
-        summary_response = safe_ask(summary_prompt)
-
-        results[phase] = {
-            "company": company_response,
-            "candidate": candidate_response,
-            "summary": summary_response,
-        }
-
-    return results
-    
 def run_single_round(data: dict, phase: str) -> dict:
     company_prompt = build_company_prompt(data, phase)
     candidate_prompt = build_candidate_prompt(data, phase)
@@ -203,15 +212,6 @@ def run_single_round(data: dict, phase: str) -> dict:
         "summary": summary_response,
     }
 
-
-def run_rounds(data: dict) -> dict:
-    phases = ["ALIGNMENT", "NEGOTIATION", "CLOSING"]
-    results = {}
-
-    for phase in phases:
-        results[phase] = run_single_round(data, phase)
-
-    return results
 
 def run_rounds(data: dict) -> dict:
     phases = ["ALIGNMENT", "NEGOTIATION", "CLOSING"]

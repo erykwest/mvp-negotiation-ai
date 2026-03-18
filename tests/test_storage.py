@@ -2,6 +2,7 @@
 
 from core import storage
 from core.repository import FileSessionRepository
+from core.template_loader import load_negotiation_template
 from core.topic_tree import OTHER_MAIN_TOPIC_ID, find_main_topic, find_subtopic, get_sorted_main_topics
 from core.workflow import WORKFLOW_STATE_ROUND_OPEN, WORKFLOW_STATE_ROUND_REVIEW
 from tests.helpers import build_state, build_topic_tree
@@ -57,7 +58,9 @@ def test_load_state_creates_default_session_file_with_other_topic(tmp_path, monk
 
     state = storage.load_state("alpha")
     main_topics = state["topic_tree"]["main_topics"]
-    titles = [topic["title"] for topic in get_sorted_main_topics(state["topic_tree"])]
+    template = load_negotiation_template()
+    template_section_ids = [section["section_id"] for section in template["sections"]]
+    non_other_topics = [topic for topic in get_sorted_main_topics(state["topic_tree"]) if not topic.get("is_other")]
     compensation = find_main_topic(state["topic_tree"], "main-compensation")
     _compensation_topic, base_salary = find_subtopic(state["topic_tree"], "sub-base_salary")
 
@@ -65,15 +68,8 @@ def test_load_state_creates_default_session_file_with_other_topic(tmp_path, monk
     assert repository.session_file("alpha").exists()
     assert state["workflow"]["current_phase"] == "ALIGNMENT"
     assert state["workflow"]["status"] == WORKFLOW_STATE_ROUND_OPEN
-    assert len(main_topics) == 6
-    assert titles == [
-        "Role & Responsibilities",
-        "Compensation",
-        "Work Mode",
-        "Benefits",
-        "Tools & Equipment",
-        "Other",
-    ]
+    assert len(main_topics) == len(template_section_ids) + 1
+    assert [topic["template_section_id"] for topic in non_other_topics] == template_section_ids
     assert compensation is not None
     assert compensation["locked"] is True
     assert base_salary is not None
@@ -96,18 +92,17 @@ def test_load_state_migrates_legacy_state_to_demo_topic_tree(tmp_path, monkeypat
     state = storage.load_state("legacy-session")
     topic_tree = state["topic_tree"]
     main_topics = get_sorted_main_topics(topic_tree)
-    titles = [topic["title"] for topic in main_topics]
     _bonus_topic, signing_bonus = find_subtopic(topic_tree, "legacy-dynamic-1")
 
     assert state["workflow"]["status"] == WORKFLOW_STATE_ROUND_OPEN
-    assert "Compensation" in titles
-    assert "Work Mode" in titles
-    assert "Benefits" in titles
+    assert find_main_topic(topic_tree, "main-compensation") is not None
+    assert find_main_topic(topic_tree, "main-work_mode") is not None
+    assert find_main_topic(topic_tree, "main-benefits") is not None
     assert any(topic["id"] == OTHER_MAIN_TOPIC_ID for topic in main_topics)
     assert signing_bonus is not None
     assert signing_bonus["phase_created"] == "NEGOTIATION"
     assert signing_bonus["positions"]["candidate"]["value"] == "5000 EUR"
-    assert len(main_topics) == 4
+    assert main_topics[-1]["id"] == OTHER_MAIN_TOPIC_ID
 
 
 def test_save_company_and_candidate_persist_canonical_topic_tree(tmp_path, monkeypatch):
@@ -430,3 +425,7 @@ def test_rewind_phase_fails_on_first_round(tmp_path, monkeypatch):
         assert "cannot go back" in str(exc).lower()
     else:
         raise AssertionError("Expected rewind_phase to fail on first round.")
+
+
+
+

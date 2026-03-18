@@ -1,3 +1,9 @@
+from core import topic_tree as _topic_tree
+from core.privacy import build_empty_private_inputs as _build_empty_private_inputs
+
+if not hasattr(_topic_tree, "build_empty_private_inputs"):
+    _topic_tree.build_empty_private_inputs = _build_empty_private_inputs
+
 from core.llm_client import BaseLLMClient, DEFAULT_MODEL_NAME, ask_llm, get_default_client
 from core.negotiation import run_rounds, run_single_round
 from core.report import build_report

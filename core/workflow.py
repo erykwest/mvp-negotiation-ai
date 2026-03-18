@@ -224,17 +224,26 @@ def build_default_state(session_id: str = "session_001") -> dict:
     )
 
 
-def merge_state_defaults(state: dict | None, session_id: str = "session_001") -> dict:
-    merged = build_default_state(session_id=session_id)
+def merge_state_defaults_without_building_default_state(state: dict | None, session_id: str = "session_001") -> dict:
     state = state or {}
 
-    merged["session_id"] = state.get("session_id", session_id)
-    merged["job_description"] = state.get("job_description", "")
-    merged["company"] = dict(state.get("company", {}))
-    merged["candidate"] = dict(state.get("candidate", {}))
-    merged["priorities"] = deepcopy(state.get("priorities", {}))
-    merged["dynamic_topics"] = deepcopy(state.get("dynamic_topics", []))
+    merged = {
+        "session_id": state.get("session_id", session_id),
+        "job_description": state.get("job_description", ""),
+        "company": dict(state.get("company", {})),
+        "candidate": dict(state.get("candidate", {})),
+        "priorities": deepcopy(state.get("priorities", {})),
+        "dynamic_topics": deepcopy(state.get("dynamic_topics", [])),
+        "workflow": normalize_workflow(state.get("workflow")),
+        "results": deepcopy(state.get("results", {})),
+        "round_snapshots": normalize_round_snapshots(state.get("round_snapshots")),
+        "shared_topic_tree": deepcopy(state.get("shared_topic_tree")),
+        "private_inputs": deepcopy(state.get("private_inputs")),
+        "shared_outputs": deepcopy(state.get("shared_outputs", {})),
+    }
+
     raw_topic_tree = state.get("topic_tree")
+    prefer_topic_tree = raw_topic_tree is not None
     if raw_topic_tree:
         merged["topic_tree"] = normalize_topic_tree(raw_topic_tree)
     elif legacy_topic_inputs_present(
@@ -251,10 +260,9 @@ def merge_state_defaults(state: dict | None, session_id: str = "session_001") ->
         )
     else:
         merged["topic_tree"] = build_topic_tree_from_template()
-    merged["workflow"] = normalize_workflow(state.get("workflow"))
-    merged["results"] = deepcopy(state.get("results", {}))
-    merged["round_snapshots"] = normalize_round_snapshots(state.get("round_snapshots"))
-    merged["shared_topic_tree"] = deepcopy(state.get("shared_topic_tree"))
-    merged["private_inputs"] = deepcopy(state.get("private_inputs"))
-    merged["shared_outputs"] = deepcopy(state.get("shared_outputs", {}))
-    return synchronize_privacy_state(merged)
+
+    return synchronize_privacy_state(merged, prefer_topic_tree=prefer_topic_tree)
+
+
+def merge_state_defaults(state: dict | None, session_id: str = "session_001") -> dict:
+    return merge_state_defaults_without_building_default_state(state, session_id=session_id)

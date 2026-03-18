@@ -3,7 +3,7 @@ import streamlit as st
 from core.negotiation import collect_round_errors, run_single_round
 from core.report import build_report
 from core.snapshots import get_round_snapshots
-from core.storage import load_round_snapshots, load_state, reset_workflow, rewind_phase, save_round_result
+from core.storage import load_state, reset_workflow, rewind_phase, save_round_result
 from core.topic_tree import get_sorted_main_topics
 from core.validation import (
     validate_report_inputs,
@@ -28,7 +28,7 @@ workflow = state["workflow"]
 current_phase = workflow["current_phase"]
 status = workflow["status"]
 results = state.get("results", {})
-round_snapshots = load_round_snapshots(session_id)
+round_snapshots = get_round_snapshots(state)
 
 st.subheader("Negotiation subject")
 st.info(state.get("job_description", "No job description yet."))
@@ -83,7 +83,7 @@ with st.expander("Raw session data", expanded=False):
 if round_snapshots:
     with st.expander("Round snapshots", expanded=False):
         st.caption("Each snapshot preserves the full negotiation state captured at the round boundary.")
-        for snapshot in reversed(get_round_snapshots(state)):
+        for snapshot in reversed(round_snapshots):
             with st.container(border=True):
                 st.markdown(f"**{PHASE_LABELS.get(snapshot.get('phase', ''), snapshot.get('phase', 'Unknown phase'))}**")
                 st.caption(f"Captured at: {snapshot.get('captured_at', '-')}")
@@ -128,8 +128,8 @@ with col2:
 if is_round_review(workflow):
     st.success("Round completed. Humans can update the data before the next round.")
 
-    current_result = load_state(session_id)["results"].get(current_phase)
-    review_errors = validate_review_readiness(load_state(session_id), current_phase, current_result)
+    current_result = results.get(current_phase)
+    review_errors = validate_review_readiness(state, current_phase, current_result)
     if current_result:
         with st.expander(
             f"{PHASE_LABELS.get(current_phase, current_phase)} - current result",
@@ -168,13 +168,13 @@ if results:
         with st.expander(PHASE_LABELS[phase], expanded=False):
             st.markdown(results[phase]["summary"])
 
-    report_errors = validate_report_inputs(load_state(session_id), results)
+    report_errors = validate_report_inputs(state, results)
     if report_errors:
         st.warning("The report is not available yet.")
         for error in report_errors:
             st.write(f"- {error}")
     else:
-        report = build_report(load_state(session_id), results)
+        report = build_report(state, results)
         st.download_button(
             "Download report",
             report,

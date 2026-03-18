@@ -2,7 +2,13 @@ import os
 from copy import deepcopy
 from pathlib import Path
 
-from core.privacy import build_party_topic_tree_view, synchronize_privacy_state
+from core.privacy import (
+    build_empty_private_inputs,
+    build_party_topic_tree_view,
+    extract_private_inputs,
+    extract_shared_topic_tree,
+    merge_topic_tree_with_private_inputs,
+)
 from core.repository import (
     FileSessionRepository,
     SessionRepository,
@@ -20,6 +26,8 @@ from core.topic_tree import (
     get_sorted_main_topics,
     has_locked_template_structure,
     normalize_topic_tree,
+    POSITION_SIDES,
+    resolve_template_main_topic_id,
     remove_negotiation_subtopics,
     topic_tree_positions_complete,
 )
@@ -78,9 +86,47 @@ def load_round_snapshots(session_id: str | None = None, phase: str | None = None
     return get_round_snapshots(state, phase=phase)
 
 
+def _party_view_side(private_inputs: dict | None) -> str | None:
+    if not isinstance(private_inputs, dict):
+        return None
+
+    populated_sides = [side for side in POSITION_SIDES if private_inputs.get(side)]
+    if len(populated_sides) == 1:
+        return populated_sides[0]
+    return None
+
+
+def _merge_party_topic_tree_payload(state: dict, side: str, topic_tree: dict, session_id: str | None = None) -> dict:
+    current_private_inputs = state.get("private_inputs") or {}
+    if all(current_private_inputs.get(current_side) for current_side in POSITION_SIDES):
+        current_state = state
+    else:
+        current_state = load_state(session_id)
+    merged_private_inputs = deepcopy(current_state.get("private_inputs") or build_empty_private_inputs())
+    incoming_topic_tree = normalize_topic_tree(topic_tree)
+    incoming_private_inputs = extract_private_inputs(incoming_topic_tree)
+
+    merged_private_inputs[side] = deepcopy(incoming_private_inputs.get(side, {}))
+    merged_shared_topic_tree = extract_shared_topic_tree(incoming_topic_tree)
+
+    state["shared_topic_tree"] = merged_shared_topic_tree
+    state["private_inputs"] = merged_private_inputs
+    state["topic_tree"] = merge_topic_tree_with_private_inputs(merged_shared_topic_tree, merged_private_inputs)
+    return state
+
+
 def save_state(state: dict, session_id: str | None = None) -> dict:
     resolved_session_id = get_current_session_id(session_id or state.get("session_id"))
-    return _repository.save(resolved_session_id, synchronize_privacy_state(state, prefer_topic_tree=True))
+    normalized_state = deepcopy(state)
+    side = _party_view_side(normalized_state.get("private_inputs"))
+    if side and normalized_state.get("topic_tree") is not None:
+        normalized_state = _merge_party_topic_tree_payload(
+            normalized_state,
+            side,
+            normalized_state.get("topic_tree", {}),
+            session_id=resolved_session_id,
+        )
+    return _repository.save(resolved_session_id, normalized_state)
 
 
 def _sync_topic_tree_from_legacy(state: dict) -> None:
@@ -163,7 +209,7 @@ def save_company(payload: dict, session_id: str | None = None) -> dict:
         }
 
     if "topic_tree" in payload:
-        state["topic_tree"] = normalize_topic_tree(payload["topic_tree"])
+        state = _merge_party_topic_tree_payload(state, "company", payload["topic_tree"], session_id=session_id)
     else:
         legacy_priorities = payload.get("priorities", {})
         legacy_company_payload = payload.get("company", {})
@@ -187,7 +233,7 @@ def save_candidate(payload: dict, session_id: str | None = None) -> dict:
         }
 
     if "topic_tree" in payload:
-        state["topic_tree"] = normalize_topic_tree(payload["topic_tree"])
+        state = _merge_party_topic_tree_payload(state, "candidate", payload["topic_tree"], session_id=session_id)
     else:
         legacy_priorities = payload.get("priorities", {})
         legacy_candidate_payload = payload.get("candidate", {})
@@ -437,11 +483,13 @@ def add_dynamic_topic(
 ) -> dict:
     state = load_state(session_id)
     topic_tree = normalize_topic_tree(state.get("topic_tree"))
-    target_main_topic_id = OTHER_MAIN_TOPIC_ID
-    for main_topic in get_sorted_main_topics(topic_tree):
-        if main_topic.get("title", "").lower().startswith(str(section or "").lower()):
-            target_main_topic_id = main_topic["id"]
-            break
+    target_main_topic_id = resolve_template_main_topic_id(section)
+    if find_main_topic(topic_tree, target_main_topic_id) is None:
+        target_main_topic_id = OTHER_MAIN_TOPIC_ID
+        for main_topic in get_sorted_main_topics(topic_tree):
+            if main_topic.get("title", "").lower().startswith(str(section or "").lower()):
+                target_main_topic_id = main_topic["id"]
+                break
     return add_subtopic(
         main_topic_id=target_main_topic_id,
         side=side,
@@ -482,17 +530,27 @@ def update_dynamic_topic_answer(
     )
 
 
-def edit_dynamic_topic(topic_id: str, side: str, section: str, title: str, answer: str, session_id: str | None = None) -> dict:
+def edit_dynamic_topic(
+    topic_id: str,
+    side: str,
+    section: str,
+    title: str,
+    answer: str,
+    session_id: str | None = None,
+    description: str | None = None,
+) -> dict:
     state = load_state(session_id)
     main_topic, subtopic = find_subtopic(state.get("topic_tree", {}), topic_id)
     if main_topic is None or subtopic is None:
         raise ValueError("Legacy topic not found.")
 
-    target_main_topic_id = main_topic["id"]
-    for topic in get_sorted_main_topics(state.get("topic_tree", {})):
-        if topic.get("title", "").lower().startswith(str(section or "").lower()):
-            target_main_topic_id = topic["id"]
-            break
+    target_main_topic_id = resolve_template_main_topic_id(section)
+    if find_main_topic(state.get("topic_tree", {}), target_main_topic_id) is None:
+        target_main_topic_id = main_topic["id"]
+        for topic in get_sorted_main_topics(state.get("topic_tree", {})):
+            if topic.get("title", "").lower().startswith(str(section or "").lower()):
+                target_main_topic_id = topic["id"]
+                break
 
     if target_main_topic_id != main_topic["id"]:
         main_topic["subtopics"] = [
@@ -506,17 +564,22 @@ def edit_dynamic_topic(topic_id: str, side: str, section: str, title: str, answe
             destination_main_topic.setdefault("subtopics", []).append(subtopic)
 
     existing_position = subtopic.get("positions", {}).get(side, {})
-    return update_subtopic(
-        topic_id,
-        side,
-        answer,
-        existing_position.get("priority"),
-        existing_position.get("deal_breaker", False),
-        existing_position.get("notes", ""),
-        title=title,
-        description=subtopic.get("description", ""),
-        session_id=session_id,
-    )
+    if not _can_edit_subtopic_position(state, side, subtopic):
+        raise ValueError("This subtopic can be completed by your side only in round 3.")
+
+    subtopic["positions"][side]["value"] = str(answer or "").strip()
+    subtopic["positions"][side]["priority"] = existing_position.get("priority")
+    subtopic["positions"][side]["deal_breaker"] = bool(existing_position.get("deal_breaker", False))
+    subtopic["positions"][side]["notes"] = str(existing_position.get("notes", "")).strip()
+
+    if title is not None or description is not None:
+        if not _can_edit_subtopic_structure(state, side, subtopic):
+            raise ValueError("Subtopic structure cannot be edited in the current phase.")
+        subtopic["title"] = str(title or subtopic.get("title", "")).strip()
+        subtopic["description"] = str(description or subtopic.get("description", "")).strip()
+
+    state["topic_tree"] = normalize_topic_tree(state.get("topic_tree"))
+    return save_state(state, session_id)
 
 
 def delete_dynamic_topic(topic_id: str, side: str, session_id: str | None = None) -> dict:

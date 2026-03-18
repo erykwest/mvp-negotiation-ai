@@ -24,6 +24,14 @@ LEGACY_DYNAMIC_SECTION_TO_TEMPLATE_SECTION = {
     "benefits": "benefits",
 }
 
+RECRUITING_TEMPLATE_CONTRACT = {
+    "role_responsibilities": {"job_title", "seniority_level", "main_responsibilities"},
+    "compensation": {"base_salary", "bonus", "salary_review"},
+    "work_mode": {"remote_hybrid_mode", "weekly_presence", "working_hours_flexibility"},
+    "benefits": {"health_welfare", "time_off", "mobility_support"},
+    "tools_equipment": {"hardware", "software_access", "training_support"},
+}
+
 
 def _main_topic_id_for_section_id(section_id: str) -> str:
     return f"main-{section_id}"
@@ -31,6 +39,55 @@ def _main_topic_id_for_section_id(section_id: str) -> str:
 
 def _subtopic_id_for_topic_id(topic_id: str) -> str:
     return f"sub-{topic_id}"
+
+
+def _template_sections_by_id(template: dict) -> dict[str, dict]:
+    return {
+        str(section.get("section_id", "")).strip(): section
+        for section in template.get("sections", [])
+        if str(section.get("section_id", "")).strip()
+    }
+
+
+def _template_topic_ids(section: dict) -> set[str]:
+    return {
+        str(topic.get("topic_id", "")).strip()
+        for topic in section.get("topics", [])
+        if str(topic.get("topic_id", "")).strip()
+    }
+
+
+def validate_recruiting_template_contract(template: dict | None = None) -> None:
+    template = template or load_negotiation_template()
+    sections_by_id = _template_sections_by_id(template)
+    errors: list[str] = []
+
+    for section_id, expected_topic_ids in RECRUITING_TEMPLATE_CONTRACT.items():
+        section = sections_by_id.get(section_id)
+        if section is None:
+            errors.append(f"Template section '{section_id}' is missing.")
+            continue
+
+        missing_topic_ids = sorted(expected_topic_ids - _template_topic_ids(section))
+        if missing_topic_ids:
+            errors.append(
+                f"Template section '{section_id}' is missing topics: {', '.join(missing_topic_ids)}."
+            )
+
+    if errors:
+        raise ValueError("Recruiting template contract mismatch: " + " ".join(errors))
+
+
+def _merge_priority_signal(current: int | None, candidate: int | None) -> int | None:
+    if current not in VALID_PRIORITY_VALUES:
+        current = None
+    if candidate not in VALID_PRIORITY_VALUES:
+        candidate = None
+    if current is None:
+        return candidate
+    if candidate is None:
+        return current
+    return max(current, candidate)
 
 
 def build_position(
@@ -267,6 +324,7 @@ def remove_negotiation_subtopics(topic_tree: dict) -> dict:
 
 def build_topic_tree_from_template(template: dict | None = None) -> dict:
     template = template or load_negotiation_template()
+    validate_recruiting_template_contract(template)
 
     main_topics = []
     for order, section in enumerate(template.get("sections", [])):
@@ -355,6 +413,7 @@ def build_recruiting_demo_topic_tree(
 
     topic_tree = build_topic_tree_from_template()
     populated_template_subtopics: set[str] = set()
+    section_priority_signals: dict[str, dict[str, int | None]] = {}
 
     for key, (section_id, topic_id) in LEGACY_FIELD_TO_TEMPLATE_TOPIC.items():
         company_value = str(company.get(key, "")).strip()
@@ -372,8 +431,15 @@ def build_recruiting_demo_topic_tree(
         if main_topic is None or subtopic is None:
             continue
 
-        main_topic["priorities"]["company"] = company_priority if company_priority in VALID_PRIORITY_VALUES else None
-        main_topic["priorities"]["candidate"] = candidate_priority if candidate_priority in VALID_PRIORITY_VALUES else None
+        section_priority_signals.setdefault(section_id, {"company": None, "candidate": None})
+        section_priority_signals[section_id]["company"] = _merge_priority_signal(
+            section_priority_signals[section_id]["company"],
+            company_priority,
+        )
+        section_priority_signals[section_id]["candidate"] = _merge_priority_signal(
+            section_priority_signals[section_id]["candidate"],
+            candidate_priority,
+        )
         subtopic["positions"]["company"] = build_position(
             value=company_value,
             priority=company_priority,
@@ -421,6 +487,19 @@ def build_recruiting_demo_topic_tree(
         main_topic = find_main_topic(topic_tree, target_main_topic_id)
         if main_topic is not None:
             main_topic["subtopics"].append(subtopic)
+
+    for section_id, side_priorities in section_priority_signals.items():
+        main_topic = find_main_topic(topic_tree, _main_topic_id_for_section_id(section_id))
+        if main_topic is None:
+            continue
+
+        # When multiple legacy fields collapse into the same template section,
+        # preserve the strongest priority signal rather than dropping earlier inputs.
+        for side in POSITION_SIDES:
+            main_topic["priorities"][side] = _merge_priority_signal(
+                main_topic["priorities"].get(side),
+                side_priorities.get(side),
+            )
 
     for main_topic in topic_tree.get("main_topics", []):
         if main_topic.get("locked"):

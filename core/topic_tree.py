@@ -1,18 +1,36 @@
 from copy import deepcopy
 from uuid import uuid4
 
+from core.template_loader import load_negotiation_template
+
 OTHER_MAIN_TOPIC_ID = "main-other"
 OTHER_MAIN_TOPIC_TITLE = "Other"
 POSITION_SIDES = ("company", "candidate")
 VALID_PRIORITY_VALUES = {1, 2, 3, 4, 5}
 
-LEGACY_TOPIC_PRESET = [
-    ("salary", "Compensation", "Compensation and salary terms"),
-    ("smart", "Smart work", "Remote and hybrid work expectations"),
-    ("bonus", "Bonus", "Variable compensation and incentives"),
-    ("car", "Car", "Company car or mobility support"),
-    ("benefits", "Benefits", "Additional benefits and perks"),
-]
+LEGACY_FIELD_TO_TEMPLATE_TOPIC = {
+    "salary": ("compensation", "base_salary"),
+    "bonus": ("compensation", "bonus"),
+    "smart": ("work_mode", "remote_hybrid_mode"),
+    "car": ("benefits", "mobility_support"),
+    "benefits": ("benefits", "health_welfare"),
+}
+
+LEGACY_DYNAMIC_SECTION_TO_TEMPLATE_SECTION = {
+    "salary": "compensation",
+    "bonus": "compensation",
+    "smart": "work_mode",
+    "car": "benefits",
+    "benefits": "benefits",
+}
+
+
+def _main_topic_id_for_section_id(section_id: str) -> str:
+    return f"main-{section_id}"
+
+
+def _subtopic_id_for_topic_id(topic_id: str) -> str:
+    return f"sub-{topic_id}"
 
 
 def build_position(
@@ -39,6 +57,9 @@ def build_main_topic(
     main_topic_id: str | None = None,
     priorities: dict | None = None,
     subtopics: list | None = None,
+    template_section_id: str | None = None,
+    allow_extra_topics: bool = True,
+    locked: bool = False,
 ) -> dict:
     topic_priorities = priorities or {}
     return {
@@ -53,6 +74,9 @@ def build_main_topic(
             "company": topic_priorities.get("company") if topic_priorities.get("company") in VALID_PRIORITY_VALUES else None,
             "candidate": topic_priorities.get("candidate") if topic_priorities.get("candidate") in VALID_PRIORITY_VALUES else None,
         },
+        "template_section_id": str(template_section_id).strip() if template_section_id else None,
+        "allow_extra_topics": bool(allow_extra_topics),
+        "locked": bool(locked),
         "subtopics": deepcopy(subtopics or []),
     }
 
@@ -66,6 +90,11 @@ def build_subtopic(
     status: str = "active",
     positions: dict | None = None,
     subtopic_id: str | None = None,
+    template_topic_id: str | None = None,
+    canonical_name: str | None = None,
+    value_type: str | None = None,
+    unit: str | None = None,
+    locked: bool = False,
 ) -> dict:
     incoming_positions = positions or {}
     return {
@@ -76,6 +105,11 @@ def build_subtopic(
         "created_by": created_by,
         "phase_created": phase_created,
         "status": status,
+        "template_topic_id": str(template_topic_id).strip() if template_topic_id else None,
+        "canonical_name": str(canonical_name).strip() if canonical_name else None,
+        "value_type": str(value_type).strip() if value_type else None,
+        "unit": str(unit).strip() if unit else None,
+        "locked": bool(locked),
         "positions": {
             "company": build_position(**incoming_positions.get("company", {})),
             "candidate": build_position(**incoming_positions.get("candidate", {})),
@@ -117,6 +151,9 @@ def normalize_topic_tree(topic_tree: dict | None) -> dict:
             is_other=main_topic.get("is_other", False),
             main_topic_id=main_topic.get("id"),
             priorities=main_topic.get("priorities", {}),
+            template_section_id=main_topic.get("template_section_id"),
+            allow_extra_topics=main_topic.get("allow_extra_topics", True),
+            locked=main_topic.get("locked", False),
             subtopics=[],
         )
         topic["subtopics"] = [
@@ -129,6 +166,11 @@ def normalize_topic_tree(topic_tree: dict | None) -> dict:
                 status=subtopic.get("status", "active"),
                 positions=subtopic.get("positions", {}),
                 subtopic_id=subtopic.get("id"),
+                template_topic_id=subtopic.get("template_topic_id"),
+                canonical_name=subtopic.get("canonical_name"),
+                value_type=subtopic.get("value_type"),
+                unit=subtopic.get("unit"),
+                locked=subtopic.get("locked", False),
             )
             for subtopic in raw_subtopics
         ]
@@ -189,6 +231,13 @@ def has_non_other_topics(topic_tree: dict) -> bool:
     return any(not main_topic.get("is_other") for main_topic in topic_tree.get("main_topics", []))
 
 
+def has_locked_template_structure(topic_tree: dict) -> bool:
+    return any(
+        main_topic.get("locked") and not main_topic.get("is_other")
+        for main_topic in topic_tree.get("main_topics", [])
+    )
+
+
 def main_topic_requires_priority(main_topic: dict) -> bool:
     return bool(main_topic.get("subtopics"))
 
@@ -216,6 +265,83 @@ def remove_negotiation_subtopics(topic_tree: dict) -> dict:
     return ensure_other_main_topic(updated_tree)
 
 
+def build_topic_tree_from_template(template: dict | None = None) -> dict:
+    template = template or load_negotiation_template()
+
+    main_topics = []
+    for order, section in enumerate(template.get("sections", [])):
+        section_id = str(section.get("section_id") or f"section-{order}").strip()
+        main_topic_id = _main_topic_id_for_section_id(section_id)
+        subtopics = []
+
+        for index, topic in enumerate(section.get("topics", [])):
+            topic_id = str(topic.get("topic_id") or f"{section_id}-topic-{index}").strip()
+            subtopics.append(
+                build_subtopic(
+                    main_topic_id=main_topic_id,
+                    title=topic.get("label", "Untitled topic"),
+                    description=topic.get("description", ""),
+                    created_by="company",
+                    phase_created="ALIGNMENT",
+                    subtopic_id=_subtopic_id_for_topic_id(topic_id),
+                    template_topic_id=topic_id,
+                    canonical_name=topic.get("canonical_name"),
+                    value_type=topic.get("value_type"),
+                    unit=topic.get("unit"),
+                    locked=True,
+                )
+            )
+
+        main_topics.append(
+            build_main_topic(
+                title=section.get("label", "Untitled section"),
+                description=section.get("description", ""),
+                created_by="company",
+                phase_created="ALIGNMENT",
+                order=order,
+                is_other=False,
+                main_topic_id=main_topic_id,
+                priorities={"company": None, "candidate": None},
+                template_section_id=section_id,
+                allow_extra_topics=section.get("allow_extra_topics", True),
+                locked=True,
+                subtopics=subtopics,
+            )
+        )
+
+    return ensure_other_main_topic({"main_topics": main_topics})
+
+
+def legacy_topic_inputs_present(
+    company: dict | None,
+    candidate: dict | None,
+    priorities: dict | None,
+    dynamic_topics: list | None,
+) -> bool:
+    company = company or {}
+    candidate = candidate or {}
+    priorities = priorities or {}
+    dynamic_topics = dynamic_topics or []
+    legacy_keys = LEGACY_FIELD_TO_TEMPLATE_TOPIC.keys()
+
+    return bool(dynamic_topics) or any(
+        [
+            any(str(company.get(key, "")).strip() for key in legacy_keys),
+            any(str(candidate.get(key, "")).strip() for key in legacy_keys),
+            any(priorities.get(key) for key in legacy_keys),
+        ]
+    )
+
+
+def resolve_template_main_topic_id(section_key: str | None) -> str:
+    normalized_key = str(section_key or "").strip().lower()
+    if not normalized_key or normalized_key == "other":
+        return OTHER_MAIN_TOPIC_ID
+
+    resolved_section_id = LEGACY_DYNAMIC_SECTION_TO_TEMPLATE_SECTION.get(normalized_key, normalized_key)
+    return _main_topic_id_for_section_id(resolved_section_id)
+
+
 def build_recruiting_demo_topic_tree(
     company: dict | None,
     candidate: dict | None,
@@ -227,9 +353,10 @@ def build_recruiting_demo_topic_tree(
     priorities = priorities or {}
     dynamic_topics = dynamic_topics or []
 
-    topic_tree = build_empty_topic_tree()
-    main_topics = []
-    for order, (key, title, description) in enumerate(LEGACY_TOPIC_PRESET):
+    topic_tree = build_topic_tree_from_template()
+    populated_template_subtopics: set[str] = set()
+
+    for key, (section_id, topic_id) in LEGACY_FIELD_TO_TEMPLATE_TOPIC.items():
         company_value = str(company.get(key, "")).strip()
         candidate_value = str(candidate.get(key, "")).strip()
         company_priority = priorities.get(key, {}).get("company")
@@ -238,51 +365,31 @@ def build_recruiting_demo_topic_tree(
         if not any([company_value, candidate_value, company_priority, candidate_priority]):
             continue
 
-        main_topic_id = f"main-demo-{key}"
-        subtopic = build_subtopic(
-            main_topic_id=main_topic_id,
-            title=f"{title} baseline",
-            description="Migrated from the legacy recruiting preset.",
-            created_by="company",
-            phase_created="ALIGNMENT",
-            subtopic_id=f"sub-demo-{key}",
-            positions={
-                "company": {
-                    "value": company_value,
-                    "priority": company_priority,
-                    "deal_breaker": False,
-                    "notes": "",
-                },
-                "candidate": {
-                    "value": candidate_value,
-                    "priority": candidate_priority,
-                    "deal_breaker": False,
-                    "notes": "",
-                },
-            },
-        )
-        main_topics.append(
-            build_main_topic(
-                title=title,
-                description=description,
-                created_by="company",
-                phase_created="ALIGNMENT",
-                order=order,
-                is_other=False,
-                main_topic_id=main_topic_id,
-                priorities={
-                    "company": company_priority,
-                    "candidate": candidate_priority,
-                },
-                subtopics=[subtopic],
-            )
-        )
+        main_topic_id = _main_topic_id_for_section_id(section_id)
+        subtopic_id = _subtopic_id_for_topic_id(topic_id)
+        main_topic = find_main_topic(topic_tree, main_topic_id)
+        _existing_main_topic, subtopic = find_subtopic(topic_tree, subtopic_id)
+        if main_topic is None or subtopic is None:
+            continue
 
-    topic_tree["main_topics"] = main_topics + topic_tree["main_topics"]
-    topic_tree = ensure_other_main_topic(topic_tree)
+        main_topic["priorities"]["company"] = company_priority if company_priority in VALID_PRIORITY_VALUES else None
+        main_topic["priorities"]["candidate"] = candidate_priority if candidate_priority in VALID_PRIORITY_VALUES else None
+        subtopic["positions"]["company"] = build_position(
+            value=company_value,
+            priority=company_priority,
+            deal_breaker=False,
+            notes="",
+        )
+        subtopic["positions"]["candidate"] = build_position(
+            value=candidate_value,
+            priority=candidate_priority,
+            deal_breaker=False,
+            notes="",
+        )
+        populated_template_subtopics.add(subtopic_id)
 
     for legacy_topic in dynamic_topics:
-        target_main_topic_id = f"main-demo-{legacy_topic.get('section', '')}"
+        target_main_topic_id = resolve_template_main_topic_id(legacy_topic.get("section"))
         if find_main_topic(topic_tree, target_main_topic_id) is None:
             target_main_topic_id = OTHER_MAIN_TOPIC_ID
 
@@ -314,6 +421,20 @@ def build_recruiting_demo_topic_tree(
         main_topic = find_main_topic(topic_tree, target_main_topic_id)
         if main_topic is not None:
             main_topic["subtopics"].append(subtopic)
+
+    for main_topic in topic_tree.get("main_topics", []):
+        if main_topic.get("locked"):
+            main_topic["subtopics"] = [
+                subtopic
+                for subtopic in main_topic.get("subtopics", [])
+                if not subtopic.get("locked") or subtopic.get("id") in populated_template_subtopics
+            ]
+
+    topic_tree["main_topics"] = [
+        main_topic
+        for main_topic in topic_tree.get("main_topics", [])
+        if main_topic.get("is_other") or main_topic.get("subtopics")
+    ]
 
     return ensure_other_main_topic(topic_tree)
 

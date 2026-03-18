@@ -8,6 +8,10 @@ Negotiation MVP for a human-in-the-loop hiring workflow.
 - `app/` is preserved as a legacy prototype and is no longer the primary workflow surface.
 - `core/` contains the shared domain, storage, validation, LLM, and report logic.
 - Session state is persisted per session in `data/<session_id>.json`.
+- Negotiation structure is template-driven from `product/templates/negotiation_template_recruiting.json`.
+- Shared structure and private party inputs are persisted separately, with a merged admin/runtime view rebuilt on load.
+- Each completed round appends an immutable snapshot of the negotiation boundary state for later inspection.
+- Workflow state is explicit and normalized on load: `ROUND_OPEN -> ROUND_REVIEW -> ROUND_OPEN/COMPLETED`.
 
 ## Run locally
 
@@ -52,10 +56,11 @@ Each role-based app exposes a `Session ID` field in the sidebar. All participant
 - New browser sessions get a generated session ID to reduce accidental collisions.
 - The sidebar shows a copy/share-friendly session value and the backing file path.
 - Sharing the page URL with `?session=<id>` keeps everyone on the same negotiation.
+- Company and candidate apps load side-specific views that hide counterparty priorities, deal breakers, notes, and raw positions.
 
 ## Core modules
 
-- `core/workflow.py`: phase labels, default state, and workflow constants.
+- `core/workflow.py`: phase labels, workflow state machine, default state, and transition helpers.
 - `core/repository.py`: repository contract plus the file-backed session repository.
 - `core/storage.py`: compatibility facade for state mutations and workflow actions.
 - `core/validation.py`: state, review, transition, and report validation.

@@ -8,7 +8,12 @@ from core.topic_tree import (
     normalize_topic_tree,
     topic_tree_positions_complete,
 )
-from core.workflow import PHASES
+from core.workflow import (
+    PHASES,
+    WORKFLOW_EVENT_ADVANCE_PHASE,
+    normalize_workflow,
+    validate_workflow_transition,
+)
 
 
 def dynamic_topics_complete(state: dict) -> bool:
@@ -109,8 +114,19 @@ def validate_state_for_round(state: dict, phase: str) -> list[str]:
     return errors
 
 
-def validate_transition(state: dict) -> list[str]:
+def validate_transition(state: dict, event: str = WORKFLOW_EVENT_ADVANCE_PHASE) -> list[str]:
     errors = validate_state_basics(state)
+    workflow = normalize_workflow(state.get("workflow"))
+    errors.extend(validate_workflow_transition(workflow, event))
+
+    if errors:
+        return errors
+
+    if event == WORKFLOW_EVENT_ADVANCE_PHASE:
+        current_phase = workflow.get("current_phase", "")
+        current_result = state.get("results", {}).get(current_phase)
+        errors.extend(validate_review_readiness(state, current_phase, current_result))
+
     return errors
 
 

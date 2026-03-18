@@ -2,14 +2,21 @@ import streamlit as st
 
 from core.negotiation import collect_round_errors, run_single_round
 from core.report import build_report
-from core.storage import load_state, reset_workflow, rewind_phase, save_round_result
+from core.snapshots import get_round_snapshots
+from core.storage import load_round_snapshots, load_state, reset_workflow, rewind_phase, save_round_result
 from core.topic_tree import get_sorted_main_topics
 from core.validation import (
     validate_report_inputs,
     validate_review_readiness,
     validate_state_for_round,
 )
-from core.workflow import PHASE_LABELS
+from core.workflow import (
+    PHASE_LABELS,
+    WORKFLOW_STATE_COMPLETED,
+    is_round_open,
+    is_round_review,
+    workflow_state_label,
+)
 from ui_helpers import get_session_id
 
 st.set_page_config(page_title="Admin", layout="wide")
@@ -21,6 +28,7 @@ workflow = state["workflow"]
 current_phase = workflow["current_phase"]
 status = workflow["status"]
 results = state.get("results", {})
+round_snapshots = load_round_snapshots(session_id)
 
 st.subheader("Negotiation subject")
 st.info(state.get("job_description", "No job description yet."))
@@ -72,6 +80,18 @@ with st.expander("Topic framework", expanded=True):
 with st.expander("Raw session data", expanded=False):
     st.json(state, expanded=False)
 
+if round_snapshots:
+    with st.expander("Round snapshots", expanded=False):
+        st.caption("Each snapshot preserves the full negotiation state captured at the round boundary.")
+        for snapshot in reversed(get_round_snapshots(state)):
+            with st.container(border=True):
+                st.markdown(f"**{PHASE_LABELS.get(snapshot.get('phase', ''), snapshot.get('phase', 'Unknown phase'))}**")
+                st.caption(f"Captured at: {snapshot.get('captured_at', '-')}")
+                if snapshot.get("result", {}).get("summary"):
+                    st.markdown(snapshot["result"]["summary"])
+                with st.expander("Snapshot data", expanded=False):
+                    st.json(snapshot, expanded=False)
+
 setup_errors = validate_state_for_round(state, current_phase)
 if setup_errors:
     st.warning("The session is not ready for the current round.")
@@ -80,12 +100,12 @@ if setup_errors:
     st.stop()
 
 st.markdown(f"### Current phase: **{PHASE_LABELS.get(current_phase, current_phase)}**")
-st.caption(f"Status: {status}")
+st.caption(f"Workflow state: {workflow_state_label(status)}")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    if status == "editing":
+    if is_round_open(workflow):
         if st.button(f"Run {PHASE_LABELS.get(current_phase, current_phase)}"):
             with st.spinner("Round running..."):
                 result = run_single_round(state, current_phase)
@@ -105,7 +125,7 @@ with col2:
             else:
                 st.rerun()
 
-if status == "review":
+if is_round_review(workflow):
     st.success("Round completed. Humans can update the data before the next round.")
 
     current_result = load_state(session_id)["results"].get(current_phase)
@@ -136,8 +156,8 @@ if status == "review":
                 st.error(str(exc))
             else:
                 st.rerun()
-    else:
-        st.info("Closing completed. The final report is ready for download.")
+elif status == WORKFLOW_STATE_COMPLETED:
+    st.info("Closing completed. The final report is ready for download.")
 
 if results:
     st.markdown("## Completed rounds")

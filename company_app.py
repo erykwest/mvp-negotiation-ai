@@ -5,14 +5,14 @@ from core.storage import (
     add_subtopic,
     delete_main_topic,
     delete_subtopic,
-    load_state,
+    load_party_state,
     save_company,
     update_main_topic,
     update_main_topic_priority,
     update_subtopic,
 )
-from core.topic_tree import OTHER_MAIN_TOPIC_ID, get_sorted_main_topics
-from core.workflow import PHASE_LABELS
+from core.topic_tree import OTHER_MAIN_TOPIC_ID, get_sorted_main_topics, has_locked_template_structure
+from core.workflow import PHASE_LABELS, is_round_open, is_round_review, workflow_state_label
 from ui_helpers import get_session_id
 
 
@@ -27,15 +27,17 @@ def priority_from_feedback(value: int | None, fallback: int | None = None) -> in
 
 
 def can_manage_main_topics(workflow: dict) -> bool:
-    return workflow.get("current_phase") == "ALIGNMENT" and workflow.get("status") == "editing"
+    return workflow.get("current_phase") == "ALIGNMENT" and is_round_open(workflow)
 
 
 def can_add_subtopics(workflow: dict) -> bool:
-    return workflow.get("status") == "editing" and workflow.get("current_phase") in {"ALIGNMENT", "NEGOTIATION"}
+    return is_round_open(workflow) and workflow.get("current_phase") in {"ALIGNMENT", "NEGOTIATION"}
 
 
 def can_edit_company_subtopic_structure(workflow: dict, subtopic: dict) -> bool:
-    if workflow.get("status") != "editing":
+    if not is_round_open(workflow):
+        return False
+    if subtopic.get("locked"):
         return False
     if subtopic.get("created_by") != "company":
         return False
@@ -47,7 +49,7 @@ def can_edit_company_subtopic_structure(workflow: dict, subtopic: dict) -> bool:
 
 
 def can_edit_company_subtopic_position(workflow: dict, subtopic: dict) -> bool:
-    if workflow.get("status") != "editing":
+    if not is_round_open(workflow):
         return False
     current_phase = workflow.get("current_phase")
     if current_phase == "NEGOTIATION":
@@ -60,16 +62,18 @@ st.set_page_config(page_title="Company", layout="wide")
 st.title("Company Interface")
 
 session_id = get_session_id(st, "company")
-state = load_state(session_id)
+state = load_party_state("company", session_id)
 workflow = state.get("workflow", {})
 
 st.caption(
     f"Session: `{session_id}` | Phase: {PHASE_LABELS.get(workflow.get('current_phase', 'ALIGNMENT'))} "
-    f"| Status: {workflow.get('status', 'editing')}"
+    f"| State: {workflow_state_label(workflow.get('status'))}"
 )
 
-if workflow.get("status") == "review":
+if is_round_review(workflow):
     st.info("A round is complete. You can update company inputs before the next round.")
+else:
+    st.caption("Your priorities, deal breakers, and notes stay private until they are turned into shared round outputs.")
 
 with st.form("company_metadata_form"):
     job_description = st.text_area(
@@ -98,7 +102,9 @@ st.divider()
 st.subheader("Topic framework")
 st.caption("Company owns the initial setup. New main topics are only allowed during setup. New subtopics can be added again in round 2.")
 
-if can_manage_main_topics(workflow):
+template_locked_structure = has_locked_template_structure(state.get("topic_tree", {}))
+
+if can_manage_main_topics(workflow) and not template_locked_structure:
     with st.form("add_main_topic_form"):
         new_main_title = st.text_input("New main topic")
         new_main_description = st.text_area("Description", height=80)
@@ -110,6 +116,8 @@ if can_manage_main_topics(workflow):
             st.rerun()
         else:
             st.error("Main topic title is required.")
+elif template_locked_structure:
+    st.caption("Main topics come from the recruiting template and are locked. You can still set priorities and add subtopics inside the predefined sections.")
 else:
     st.caption("Main topic structure is locked after setup. You can still edit company priorities and positions.")
 
@@ -120,7 +128,11 @@ for main_topic in get_sorted_main_topics(state.get("topic_tree", {})):
             st.caption(main_topic["description"])
 
         with st.form(f"company_main_topic_{main_topic['id']}"):
-            structure_editable = can_manage_main_topics(workflow) and not main_topic.get("is_other")
+            structure_editable = (
+                can_manage_main_topics(workflow)
+                and not main_topic.get("is_other")
+                and not main_topic.get("locked")
+            )
 
             edited_title = st.text_input(
                 "Title",
@@ -144,8 +156,6 @@ for main_topic in get_sorted_main_topics(state.get("topic_tree", {})):
                 key=f"company_main_priority_{session_id}_{main_topic['id']}",
                 default=priority_default(main_topic.get("priorities", {}).get("company")),
             )
-            candidate_priority = main_topic.get("priorities", {}).get("candidate")
-            st.caption(f"Candidate priority: {candidate_priority if candidate_priority else '-'} / 5")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -228,7 +238,6 @@ for main_topic in get_sorted_main_topics(state.get("topic_tree", {})):
 
         for subtopic in main_topic.get("subtopics", []):
             company_position = subtopic.get("positions", {}).get("company", {})
-            candidate_position = subtopic.get("positions", {}).get("candidate", {})
             structure_editable = can_edit_company_subtopic_structure(workflow, subtopic)
             position_editable = can_edit_company_subtopic_position(workflow, subtopic)
 
@@ -272,26 +281,7 @@ for main_topic in get_sorted_main_topics(state.get("topic_tree", {})):
                         height=80,
                         disabled=not position_editable,
                     )
-
-                    st.markdown("##### Candidate view")
-                    st.text_area(
-                        "Candidate position",
-                        value=candidate_position.get("value", ""),
-                        height=100,
-                        disabled=True,
-                        key=f"company_read_candidate_value_{session_id}_{subtopic['id']}",
-                    )
-                    st.caption(
-                        f"Candidate priority: {candidate_position.get('priority') if candidate_position.get('priority') else '-'} / 5 | "
-                        f"Deal breaker: {'yes' if candidate_position.get('deal_breaker') else 'no'}"
-                    )
-                    st.text_area(
-                        "Candidate notes",
-                        value=candidate_position.get("notes", ""),
-                        height=80,
-                        disabled=True,
-                        key=f"company_read_candidate_notes_{session_id}_{subtopic['id']}",
-                    )
+                    st.caption("Counterparty inputs remain private. Shared outputs are generated by the round workflow.")
 
                     col1, col2 = st.columns(2)
                     with col1:

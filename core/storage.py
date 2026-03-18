@@ -1,12 +1,15 @@
 import os
+from copy import deepcopy
 from pathlib import Path
 
+from core.privacy import build_party_topic_tree_view, synchronize_privacy_state
 from core.repository import (
     FileSessionRepository,
     SessionRepository,
     generate_session_id,
     normalize_session_id,
 )
+from core.snapshots import append_round_snapshot, get_round_snapshots
 from core.topic_tree import (
     OTHER_MAIN_TOPIC_ID,
     build_main_topic,
@@ -15,6 +18,7 @@ from core.topic_tree import (
     find_main_topic,
     find_subtopic,
     get_sorted_main_topics,
+    has_locked_template_structure,
     normalize_topic_tree,
     remove_negotiation_subtopics,
     topic_tree_positions_complete,
@@ -24,7 +28,17 @@ from core.validation import (
     validate_state_basics,
     validate_transition,
 )
-from core.workflow import PHASES, get_next_phase, resettable_workflow_state
+from core.workflow import (
+    PHASES,
+    WORKFLOW_EVENT_ADVANCE_PHASE,
+    WORKFLOW_STATE_ROUND_OPEN,
+    advance_workflow,
+    is_round_open,
+    mark_round_review,
+    normalize_workflow,
+    resettable_workflow_state,
+    rewind_workflow,
+)
 
 DEFAULT_SESSION_ID = "session_001"
 DATA_DIR = Path(os.environ.get("NEGOTIATION_DATA_DIR", "data"))
@@ -49,9 +63,24 @@ def load_state(session_id: str | None = None) -> dict:
     return _repository.load(get_current_session_id(session_id))
 
 
+def load_party_state(side: str, session_id: str | None = None) -> dict:
+    state = load_state(session_id)
+    party_state = deepcopy(state)
+    party_state["topic_tree"] = build_party_topic_tree_view(state, side)
+    party_state["private_inputs"] = {
+        side: deepcopy(state.get("private_inputs", {}).get(side, {}))
+    }
+    return party_state
+
+
+def load_round_snapshots(session_id: str | None = None, phase: str | None = None) -> list[dict]:
+    state = load_state(session_id)
+    return get_round_snapshots(state, phase=phase)
+
+
 def save_state(state: dict, session_id: str | None = None) -> dict:
     resolved_session_id = get_current_session_id(session_id or state.get("session_id"))
-    return _repository.save(resolved_session_id, state)
+    return _repository.save(resolved_session_id, synchronize_privacy_state(state, prefer_topic_tree=True))
 
 
 def _sync_topic_tree_from_legacy(state: dict) -> None:
@@ -64,19 +93,19 @@ def _sync_topic_tree_from_legacy(state: dict) -> None:
 
 
 def _current_phase(state: dict) -> str:
-    return state.get("workflow", {}).get("current_phase", "ALIGNMENT")
+    return normalize_workflow(state.get("workflow")).get("current_phase", "ALIGNMENT")
 
 
 def _current_status(state: dict) -> str:
-    return state.get("workflow", {}).get("status", "editing")
+    return normalize_workflow(state.get("workflow")).get("status", WORKFLOW_STATE_ROUND_OPEN)
 
 
 def _can_manage_initial_structure(state: dict, side: str) -> bool:
-    return side == "company" and _current_phase(state) == "ALIGNMENT" and _current_status(state) == "editing"
+    return side == "company" and _current_phase(state) == "ALIGNMENT" and is_round_open(state.get("workflow"))
 
 
 def _can_add_subtopic(state: dict, side: str) -> bool:
-    if _current_status(state) != "editing":
+    if not is_round_open(state.get("workflow")):
         return False
     if _current_phase(state) == "ALIGNMENT":
         return side == "company"
@@ -86,7 +115,7 @@ def _can_add_subtopic(state: dict, side: str) -> bool:
 
 
 def _can_edit_subtopic_structure(state: dict, side: str, subtopic: dict) -> bool:
-    if _current_status(state) != "editing":
+    if not is_round_open(state.get("workflow")):
         return False
     if subtopic.get("created_by") != side:
         return False
@@ -100,7 +129,7 @@ def _can_edit_subtopic_structure(state: dict, side: str, subtopic: dict) -> bool
 
 
 def _can_edit_subtopic_position(state: dict, side: str, subtopic: dict) -> bool:
-    if _current_status(state) != "editing":
+    if not is_round_open(state.get("workflow")):
         return False
 
     current_phase = _current_phase(state)
@@ -183,41 +212,28 @@ def save_round_result(phase: str, result: dict, session_id: str | None = None) -
 
     state = load_state(session_id)
     state["results"][phase] = result
-    state["workflow"]["status"] = "review"
+    state["workflow"] = mark_round_review(state.get("workflow"), phase)
+    append_round_snapshot(state, phase, result)
     return save_state(state, session_id)
 
 
 def advance_phase(session_id: str | None = None) -> dict:
     state = load_state(session_id)
-    errors = validate_transition(state)
+    errors = validate_transition(state, event=WORKFLOW_EVENT_ADVANCE_PHASE)
     if errors:
         raise ValueError("; ".join(errors))
 
-    current = state["workflow"]["current_phase"]
-    next_phase = get_next_phase(current)
-
-    if next_phase is None:
-        state["workflow"]["status"] = "closed"
-    else:
-        state["workflow"]["current_phase"] = next_phase
-        state["workflow"]["status"] = "editing"
-
+    state["workflow"] = advance_workflow(state.get("workflow"))
     return save_state(state, session_id)
 
 
 def rewind_phase(session_id: str | None = None) -> dict:
     state = load_state(session_id)
-    current = state.get("workflow", {}).get("current_phase")
+    current = normalize_workflow(state.get("workflow")).get("current_phase")
     if current not in PHASES:
         raise ValueError(f"Unknown phase: {current}")
-
     current_index = PHASES.index(current)
-    if current_index == 0:
-        raise ValueError("Already at the first round; cannot go back further.")
-
-    previous_phase = PHASES[current_index - 1]
-    state["workflow"]["current_phase"] = previous_phase
-    state["workflow"]["status"] = "editing"
+    state["workflow"] = rewind_workflow(state.get("workflow"))
 
     # Going back is a test/debug action: clear results from the reopened round onward.
     for phase in PHASES[current_index - 1 :]:
@@ -230,6 +246,7 @@ def reset_workflow(session_id: str | None = None) -> dict:
     state = load_state(session_id)
     state["workflow"] = resettable_workflow_state()
     state["results"] = {}
+    state["round_snapshots"] = []
     state["dynamic_topics"] = []
     state["topic_tree"] = remove_negotiation_subtopics(state.get("topic_tree", {}))
     return save_state(state, session_id)
@@ -244,6 +261,8 @@ def add_main_topic(
     state = load_state(session_id)
     if not _can_manage_initial_structure(state, "company"):
         raise ValueError("Main topics can only be managed by company during setup.")
+    if has_locked_template_structure(state.get("topic_tree", {})):
+        raise ValueError("Main topics are defined by the recruiting template.")
 
     topic_tree = normalize_topic_tree(state.get("topic_tree"))
     existing_orders = [topic.get("order", 0) for topic in topic_tree.get("main_topics", []) if not topic.get("is_other")]
@@ -275,6 +294,8 @@ def update_main_topic(
     main_topic = find_main_topic(state.get("topic_tree", {}), main_topic_id)
     if main_topic is None or main_topic.get("is_other"):
         raise ValueError("Main topic not found or cannot be edited.")
+    if main_topic.get("locked"):
+        raise ValueError("Template main topics cannot be edited.")
 
     main_topic["title"] = title.strip()
     main_topic["description"] = description.strip()
@@ -287,6 +308,10 @@ def delete_main_topic(main_topic_id: str, session_id: str | None = None) -> dict
     state = load_state(session_id)
     if not _can_manage_initial_structure(state, "company"):
         raise ValueError("Main topics can only be managed by company during setup.")
+
+    main_topic = find_main_topic(state.get("topic_tree", {}), main_topic_id)
+    if main_topic is not None and main_topic.get("locked"):
+        raise ValueError("Template main topics cannot be deleted.")
 
     topic_tree = normalize_topic_tree(state.get("topic_tree"))
     topic_tree["main_topics"] = [

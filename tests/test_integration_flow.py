@@ -1,10 +1,9 @@
-import core.storage as storage
+﻿import core.storage as storage
 from core.llm_client import BaseLLMClient, LLMRequest
 from core.negotiation import run_single_round
 from core.report import build_report
 from core.repository import FileSessionRepository
 from core.storage import (
-    add_main_topic,
     add_subtopic,
     advance_phase,
     load_state,
@@ -15,6 +14,8 @@ from core.storage import (
     update_subtopic,
 )
 from core.topic_tree import find_main_topic, find_subtopic
+from core.workflow import WORKFLOW_STATE_ROUND_REVIEW
+from tests.helpers import build_topic_tree
 
 
 class SequencedClient(BaseLLMClient):
@@ -30,22 +31,24 @@ def test_happy_path_modular_topic_tree_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "_repository", FileSessionRepository(tmp_path))
     session_id = "happy-path"
     client = SequencedClient()
+    topic_tree = build_topic_tree()
 
     save_company(
         {
             "job_description": "Senior BIM coordinator role",
             "company": {"name": "TechNova Engineering"},
+            "topic_tree": topic_tree,
         },
         session_id=session_id,
     )
     save_candidate(
         {
             "candidate": {"name": "Marco Rinaldi"},
+            "topic_tree": topic_tree,
         },
         session_id=session_id,
     )
 
-    add_main_topic("Compensation", "Economic package and incentives.", session_id=session_id)
     state = load_state(session_id)
     compensation = find_main_topic(state["topic_tree"], "main-compensation")
     if compensation is None:
@@ -54,17 +57,6 @@ def test_happy_path_modular_topic_tree_flow(tmp_path, monkeypatch):
 
     update_main_topic_priority(compensation_id, "company", 5, session_id=session_id)
     update_main_topic_priority(compensation_id, "candidate", 4, session_id=session_id)
-    add_subtopic(
-        compensation_id,
-        "company",
-        "Base salary",
-        "Annual gross salary.",
-        "42000 EUR gross",
-        5,
-        False,
-        "Budget approved for this range.",
-        session_id=session_id,
-    )
 
     state = load_state(session_id)
     _main_topic, base_salary = find_subtopic(state["topic_tree"], "sub-base-salary")
@@ -131,8 +123,12 @@ def test_happy_path_modular_topic_tree_flow(tmp_path, monkeypatch):
     report = build_report(final_state, final_state["results"])
 
     assert final_state["workflow"]["current_phase"] == "CLOSING"
-    assert final_state["workflow"]["status"] == "review"
+    assert final_state["workflow"]["status"] == WORKFLOW_STATE_ROUND_REVIEW
     assert set(final_state["results"].keys()) == {"ALIGNMENT", "NEGOTIATION", "CLOSING"}
+    assert len(final_state["round_snapshots"]) == 3
     assert "mock-response-9" in report
     assert "Signing bonus" in report
-    assert "Main topic priority - company: 5/5" in report
+    assert "Private priorities, deal breakers, and notes" in report
+    assert "Snapshot captured:" in report
+    assert "Main topic priority - company: 5/5" not in report
+

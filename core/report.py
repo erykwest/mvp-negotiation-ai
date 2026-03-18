@@ -1,3 +1,5 @@
+from core.privacy import extract_shared_topic_tree
+from core.snapshots import get_latest_round_snapshot
 from core.topic_tree import get_sorted_main_topics, normalize_topic_tree
 from core.validation import validate_report_inputs
 from core.workflow import PHASE_LABELS
@@ -12,34 +14,12 @@ def _render_topic_tree(topic_tree: dict) -> list[str]:
         lines.append(f"### {main_topic['title']}")
         if main_topic.get("description"):
             lines.append(main_topic["description"])
-        lines.append(
-            f"- Main topic priority - company: {main_topic['priorities'].get('company', '-')}/5"
-        )
-        lines.append(
-            f"- Main topic priority - candidate: {main_topic['priorities'].get('candidate', '-')}/5"
-        )
 
         for subtopic in main_topic.get("subtopics", []):
-            company_position = subtopic.get("positions", {}).get("company", {})
-            candidate_position = subtopic.get("positions", {}).get("candidate", {})
             lines.append(f"- Subtopic: {subtopic['title']}")
             lines.append(f"  - Description: {subtopic.get('description', '-') or '-'}")
             lines.append(f"  - Created by: {subtopic.get('created_by', '-')}")
             lines.append(f"  - Phase created: {subtopic.get('phase_created', '-')}")
-            lines.append(
-                f"  - Company: {company_position.get('value', '-') or '-'} "
-                f"(priority: {company_position.get('priority', '-')}/5, "
-                f"deal breaker: {'yes' if company_position.get('deal_breaker') else 'no'})"
-            )
-            lines.append(
-                f"  - Candidate: {candidate_position.get('value', '-') or '-'} "
-                f"(priority: {candidate_position.get('priority', '-')}/5, "
-                f"deal breaker: {'yes' if candidate_position.get('deal_breaker') else 'no'})"
-            )
-            if company_position.get("notes"):
-                lines.append(f"  - Company notes: {company_position['notes']}")
-            if candidate_position.get("notes"):
-                lines.append(f"  - Candidate notes: {candidate_position['notes']}")
         lines.append("")
 
     return lines
@@ -67,9 +47,11 @@ def build_report(data: dict, results: dict) -> str:
         f"- Candidate: **{candidate.get('name', '-')}**",
         "",
         "## Topic structure",
+        "_Private priorities, deal breakers, and notes are intentionally excluded from this report._",
         "",
     ]
-    lines.extend(_render_topic_tree(data.get("topic_tree", {})))
+    shared_topic_tree = data.get("shared_topic_tree") or extract_shared_topic_tree(data.get("topic_tree", {}))
+    lines.extend(_render_topic_tree(shared_topic_tree))
 
     for phase in ["ALIGNMENT", "NEGOTIATION", "CLOSING"]:
         if phase not in results:
@@ -82,6 +64,18 @@ def build_report(data: dict, results: dict) -> str:
                 "",
                 f"## {PHASE_LABELS[phase]}",
                 "",
+            ]
+        )
+        snapshot = get_latest_round_snapshot(data, phase)
+        if snapshot and snapshot.get("captured_at"):
+            lines.extend(
+                [
+                    f"- Snapshot captured: `{snapshot['captured_at']}`",
+                    "",
+                ]
+            )
+        lines.extend(
+            [
                 "### Company position",
                 round_content.get("company", "_No content_"),
                 "",

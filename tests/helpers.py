@@ -1,4 +1,4 @@
-﻿from copy import deepcopy
+from copy import deepcopy
 
 from core.topic_tree import build_main_topic, build_subtopic, normalize_topic_tree
 from core.workflow import WORKFLOW_STATE_ROUND_OPEN, normalize_workflow_status
@@ -123,5 +123,9 @@ def build_state(
         "topic_tree": deepcopy(topic_tree or build_topic_tree()),
         "workflow": {"current_phase": current_phase, "status": normalize_workflow_status(status)},
         "results": deepcopy(results or {}),
+        "rfis": [],
     }
+
+
+
 

@@ -1,4 +1,5 @@
 from core.llm_client import is_llm_error
+from core.rfis import get_rfis
 from core.topic_tree import (
     OTHER_MAIN_TOPIC_ID,
     POSITION_SIDES,
@@ -141,6 +142,12 @@ def validate_review_readiness(state: dict, phase: str, result: dict | None) -> l
         value = result.get(field, "")
         if is_llm_error(value):
             errors.append(f"{field.title()} response failed and must be rerun before continuing.")
+
+    unresolved_rfis = get_rfis(state, phase=phase, status="OPEN")
+    for rfi in unresolved_rfis:
+        target_side = rfi.get("target_side", "-")
+        question = rfi.get("question", "").strip() or "Untitled RFI"
+        errors.append(f"Open RFI for {target_side}: {question}")
 
     return errors
 

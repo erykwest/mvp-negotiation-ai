@@ -2,6 +2,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from core.rfis import normalize_rfis, normalize_suggested_rfis
+
 
 def normalize_round_snapshots(round_snapshots: list[dict] | None) -> list[dict]:
     normalized: list[dict] = []
@@ -23,6 +25,8 @@ def normalize_round_snapshots(round_snapshots: list[dict] | None) -> list[dict]:
                 "topic_tree": deepcopy(snapshot.get("topic_tree", {})),
                 "result": deepcopy(snapshot.get("result", {})),
                 "results": deepcopy(snapshot.get("results", {})),
+                "rfis": normalize_rfis(snapshot.get("rfis")),
+                "suggested_rfis": normalize_suggested_rfis(snapshot.get("suggested_rfis")),
                 "shared_outputs": deepcopy(snapshot.get("shared_outputs", {})),
             }
         )
@@ -44,6 +48,8 @@ def build_round_snapshot(state: dict, phase: str, result: dict, sequence: int) -
         "topic_tree": deepcopy(state.get("topic_tree", {})),
         "result": deepcopy(result),
         "results": deepcopy(state.get("results", {})),
+        "rfis": normalize_rfis(state.get("rfis")),
+        "suggested_rfis": normalize_suggested_rfis(state.get("suggested_rfis")),
         "shared_outputs": deepcopy(state.get("shared_outputs", {})),
     }
 

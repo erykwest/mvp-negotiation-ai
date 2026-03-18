@@ -1,4 +1,4 @@
-﻿from core.validation import (
+from core.validation import (
     validate_review_readiness,
     validate_state_basics,
     validate_state_for_round,
@@ -70,3 +70,29 @@ def test_closing_phase_requires_both_sides_to_complete_round2_subtopics():
 
     assert "Subtopic 'Signing bonus' is missing company value." in errors
     assert "Subtopic 'Signing bonus' is missing valid company priority." in errors
+def test_review_readiness_blocks_advancing_with_open_rfis():
+    state = build_state(
+        current_phase="ALIGNMENT",
+        status=WORKFLOW_STATE_ROUND_REVIEW,
+        results={"ALIGNMENT": {"company": "ok", "candidate": "ok", "summary": "ok"}},
+    )
+    state["rfis"] = [
+        {
+            "id": "rfi-1",
+            "phase": "ALIGNMENT",
+            "status": "OPEN",
+            "requested_by": "company",
+            "target_side": "candidate",
+            "question": "Please clarify notice period flexibility.",
+            "response": "",
+            "subtopic_id": None,
+            "subtopic_title": "",
+            "created_at": "2026-03-18T10:00:00+00:00",
+            "answered_at": "",
+        }
+    ]
+
+    errors = validate_review_readiness(state, "ALIGNMENT", state["results"]["ALIGNMENT"])
+
+    assert "Open RFI for candidate: Please clarify notice period flexibility." in errors
+

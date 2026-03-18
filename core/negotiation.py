@@ -6,8 +6,10 @@ from core.llm_client import (
     format_llm_error_message,
     is_llm_error,
 )
+from core.rfis import get_answered_rfis_before_phase
 from core.topic_tree import get_sorted_main_topics, normalize_topic_tree
 from core.validation import validate_state_for_round
+from core.workflow import PHASES
 
 
 def format_topic_tree_for_prompt(topic_tree: dict) -> str:
@@ -49,6 +51,24 @@ def format_topic_tree_for_prompt(topic_tree: dict) -> str:
     return "\n".join(lines).strip() or "No topics configured."
 
 
+def format_answered_rfis_for_prompt(data: dict, phase: str) -> str:
+    answered_rfis = get_answered_rfis_before_phase(data, phase)
+    if not answered_rfis:
+        return "No prior RFIs."
+
+    lines = []
+    for rfi in answered_rfis:
+        subtopic_scope = f" ({rfi['subtopic_title']})" if rfi.get("subtopic_title") else ""
+        lines.extend(
+            [
+                f"- [{rfi.get('phase', '-')}] {rfi.get('requested_by', '-')} -> {rfi.get('target_side', '-')}{subtopic_scope}",
+                f"  Question: {rfi.get('question', '-') or '-'}",
+                f"  Answer: {rfi.get('response', '-') or '-'}",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def build_company_prompt(data: dict, phase: str) -> str:
     return f"""
 PHASE: {phase}
@@ -66,6 +86,9 @@ PARTIES:
 
 TOPIC TREE:
 {format_topic_tree_for_prompt(data.get("topic_tree", {}))}
+
+RESOLVED RFIS FROM PREVIOUS ROUNDS:
+{format_answered_rfis_for_prompt(data, phase)}
 
 INSTRUCTIONS:
 - Write in a concise, professional tone.
@@ -94,6 +117,9 @@ PARTIES:
 
 TOPIC TREE:
 {format_topic_tree_for_prompt(data.get("topic_tree", {}))}
+
+RESOLVED RFIS FROM PREVIOUS ROUNDS:
+{format_answered_rfis_for_prompt(data, phase)}
 
 INSTRUCTIONS:
 - Write in a concise, professional tone.
@@ -136,7 +162,10 @@ REQUIRED OUTPUT:
 - ...
 
 ## RFIs or clarifications needed
-- ...
+- Write `- none` if no clarification is needed.
+- Otherwise use one bullet per item with this exact format:
+  - [target:company|candidate] [scope:general|<subtopic title>] <single clarification question>
+- In round 2, include only clarifications about new topics introduced in round 2 by the target side.
 
 ## Recommended next move
 (max 3 lines)
@@ -200,7 +229,7 @@ def run_rounds(
     client: BaseLLMClient | None = None,
     model: str = DEFAULT_MODEL_NAME,
 ) -> dict:
-    phases = ["ALIGNMENT", "NEGOTIATION", "CLOSING"]
+    phases = PHASES
     results = {}
 
     for phase in phases:

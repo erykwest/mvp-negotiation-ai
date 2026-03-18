@@ -1,4 +1,5 @@
 from core.llm_client import BaseLLMClient, LLMRequest
+from core.rfis import build_rfi, extract_suggested_rfis_from_summary
 from core.negotiation import (
     build_candidate_prompt,
     build_company_prompt,
@@ -69,3 +70,62 @@ def test_review_readiness_blocks_advancing_after_llm_failure():
     assert len(errors) == 3
     assert any("provider unavailable" in error for error in errors)
     assert any("Company response failed" in error for error in review_errors)
+def test_prompt_builders_include_answered_rfis_from_previous_rounds():
+    state = build_state()
+    state["rfis"] = [
+        build_rfi(
+            phase="ALIGNMENT",
+            requested_by="candidate",
+            target_side="company",
+            question="Can the salary review happen after 6 months?",
+            response="Yes, if objectives are met.",
+            status="ANSWERED",
+            subtopic_title="Base salary",
+        )
+    ]
+
+    company_prompt = build_company_prompt(state, "NEGOTIATION")
+
+    assert "RESOLVED RFIS FROM PREVIOUS ROUNDS" in company_prompt
+    assert "Can the salary review happen after 6 months?" in company_prompt
+    assert "Yes, if objectives are met." in company_prompt
+
+
+
+def test_extract_suggested_rfis_from_summary_parses_structured_bullets():
+    topic_tree = build_topic_tree()
+    summary = """
+## Round objective
+Short objective.
+
+## RFIs or clarifications needed
+- [target:candidate] [scope:Base salary] Can the notice period be reduced below 60 days?
+- [target:company] [scope:general] Confirm whether laptop shipment happens before day one.
+
+## Recommended next move
+Proceed with clarifications.
+""".strip()
+
+    suggestions = extract_suggested_rfis_from_summary(summary, "ALIGNMENT", topic_tree)
+
+    assert len(suggestions) == 2
+    assert suggestions[0]["target_side"] == "candidate"
+    assert suggestions[0]["subtopic_id"] == "sub-base-salary"
+    assert suggestions[1]["target_side"] == "company"
+    assert suggestions[1]["subtopic_id"] is None
+
+
+def test_extract_suggested_rfis_from_summary_filters_round2_scope():
+    topic_tree = build_topic_tree(include_round2_subtopic=True, round2_creator="candidate")
+    summary = """
+## RFIs or clarifications needed
+- [target:candidate] [scope:Signing bonus] Clarify whether the requested bonus is tied to probation completion.
+- [target:company] [scope:general] Clarify office equipment timing.
+- [target:company] [scope:Base salary] Clarify annual review timing.
+""".strip()
+
+    suggestions = extract_suggested_rfis_from_summary(summary, "NEGOTIATION", topic_tree)
+
+    assert len(suggestions) == 1
+    assert suggestions[0]["target_side"] == "candidate"
+    assert suggestions[0]["subtopic_title"] == "Signing bonus"

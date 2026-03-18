@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 from core.privacy import synchronize_privacy_state
+from core.rfis import normalize_rfis, normalize_suggested_rfis
 from core.snapshots import normalize_round_snapshots
 from core.topic_tree import (
     build_recruiting_demo_topic_tree,
@@ -220,6 +221,8 @@ def build_default_state(session_id: str = "session_001") -> dict:
             "workflow": resettable_workflow_state(),
             "results": {},
             "round_snapshots": [],
+            "rfis": [],
+            "suggested_rfis": [],
         }
     )
 
@@ -237,6 +240,8 @@ def merge_state_defaults_without_building_default_state(state: dict | None, sess
         "workflow": normalize_workflow(state.get("workflow")),
         "results": deepcopy(state.get("results", {})),
         "round_snapshots": normalize_round_snapshots(state.get("round_snapshots")),
+        "rfis": normalize_rfis(state.get("rfis")),
+        "suggested_rfis": normalize_suggested_rfis(state.get("suggested_rfis")),
         "shared_topic_tree": deepcopy(state.get("shared_topic_tree")),
         "private_inputs": deepcopy(state.get("private_inputs")),
         "shared_outputs": deepcopy(state.get("shared_outputs", {})),

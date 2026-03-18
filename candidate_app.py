@@ -1,7 +1,10 @@
 import streamlit as st
 
+from core.rfis import get_rfis
 from core.storage import (
     add_subtopic,
+    answer_rfi,
+    create_rfi,
     delete_subtopic,
     load_party_state,
     save_candidate,
@@ -47,12 +50,30 @@ def can_edit_candidate_subtopic_position(workflow: dict, subtopic: dict) -> bool
     return True
 
 
+def candidate_rfi_targets(topic_tree: dict, workflow: dict) -> list[tuple[str | None, str]]:
+    options: list[tuple[str | None, str]] = []
+    current_phase = workflow.get("current_phase")
+    if current_phase == "ALIGNMENT":
+        options.append((None, "General clarification"))
+        for main_topic in get_sorted_main_topics(topic_tree):
+            for subtopic in main_topic.get("subtopics", []):
+                options.append((subtopic["id"], f"{main_topic['title']} / {subtopic['title']}"))
+    elif current_phase == "NEGOTIATION":
+        for main_topic in get_sorted_main_topics(topic_tree):
+            for subtopic in main_topic.get("subtopics", []):
+                if subtopic.get("phase_created") == "NEGOTIATION" and subtopic.get("created_by") == "company":
+                    options.append((subtopic["id"], f"{main_topic['title']} / {subtopic['title']}"))
+    return options
+
+
 st.set_page_config(page_title="Candidate", layout="wide")
 st.title("Candidate Interface")
 
 session_id = get_session_id(st, "candidate")
 state = load_party_state("candidate", session_id)
 workflow = state.get("workflow", {})
+current_phase = workflow.get("current_phase", "ALIGNMENT")
+current_phase_rfis = get_rfis(state, phase=current_phase)
 
 st.caption(
     f"Session: `{session_id}` | Phase: {PHASE_LABELS.get(workflow.get('current_phase', 'ALIGNMENT'))} "
@@ -86,6 +107,68 @@ if save_metadata:
     st.rerun()
 
 st.divider()
+if is_round_review(workflow):
+    st.subheader("RFIs / Clarifications")
+
+    incoming_rfis = [rfi for rfi in current_phase_rfis if rfi.get("target_side") == "candidate" and rfi.get("status") == "OPEN"]
+    for rfi in incoming_rfis:
+        scope = f" ({rfi['subtopic_title']})" if rfi.get("subtopic_title") else ""
+        with st.form(f"candidate_answer_rfi_{rfi['id']}"):
+            st.markdown(f"**Open RFI from company{scope}**")
+            st.write(rfi.get("question", "-"))
+            rfi_response = st.text_area("Response", height=100)
+            answer_rfi_button = st.form_submit_button("Send response")
+
+        if answer_rfi_button:
+            try:
+                answer_rfi(rfi["id"], "candidate", rfi_response, session_id=session_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success("RFI answered.")
+                st.rerun()
+
+    if current_phase in {"ALIGNMENT", "NEGOTIATION"}:
+        rfi_targets = candidate_rfi_targets(state.get("topic_tree", {}), workflow)
+        if rfi_targets:
+            target_labels = [label for _subtopic_id, label in rfi_targets]
+            with st.form("candidate_create_rfi"):
+                if current_phase == "NEGOTIATION":
+                    st.caption("Round 2 RFIs can only target subtopics introduced by company in round 2.")
+                selected_target_label = st.selectbox("Clarification scope", target_labels)
+                rfi_question = st.text_area("Question for company", height=100)
+                create_rfi_button = st.form_submit_button("Open RFI")
+
+            if create_rfi_button:
+                label_to_subtopic_id = {label: subtopic_id for subtopic_id, label in rfi_targets}
+                selected_subtopic_id = label_to_subtopic_id.get(selected_target_label)
+                try:
+                    create_rfi(
+                        "candidate",
+                        "company",
+                        rfi_question,
+                        subtopic_id=selected_subtopic_id,
+                        session_id=session_id,
+                    )
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("RFI opened.")
+                    st.rerun()
+        elif current_phase == "NEGOTIATION":
+            st.caption("No company-introduced round 2 subtopics are available for RFIs.")
+
+    if current_phase_rfis:
+        with st.expander("Current phase RFI log", expanded=False):
+            for rfi in current_phase_rfis:
+                scope = f" ({rfi['subtopic_title']})" if rfi.get("subtopic_title") else ""
+                st.markdown(
+                    f"- [{rfi.get('status', '-')}] {rfi.get('requested_by', '-')} -> {rfi.get('target_side', '-')}{scope}: "
+                    f"{rfi.get('question', '-') or '-'}"
+                )
+                if rfi.get("response"):
+                    st.caption(f"Response: {rfi['response']}")
+
 st.subheader("Topic framework")
 
 main_topics = get_sorted_main_topics(state.get("topic_tree", {}))

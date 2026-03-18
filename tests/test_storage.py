@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 from core import storage
 from core.repository import FileSessionRepository
@@ -429,3 +429,120 @@ def test_rewind_phase_fails_on_first_round(tmp_path, monkeypatch):
 
 
 
+
+def test_rfi_flow_blocks_advance_until_answered(tmp_path, monkeypatch):
+    configure_repo(tmp_path, monkeypatch)
+    session_id = "rfi-flow"
+    storage.save_state(build_state(), session_id=session_id)
+    storage.save_round_result("ALIGNMENT", {"company": "ok", "candidate": "ok", "summary": "ok"}, session_id=session_id)
+
+    storage.create_rfi(
+        "company",
+        "candidate",
+        "Please clarify notice period flexibility.",
+        session_id=session_id,
+    )
+
+    try:
+        storage.advance_phase(session_id=session_id)
+    except ValueError as exc:
+        assert "Open RFI for candidate" in str(exc)
+    else:
+        raise AssertionError("Expected open RFIs to block round advancement.")
+
+    storage.answer_rfi(
+        storage.load_rfis(session_id, phase="ALIGNMENT", status="OPEN")[0]["id"],
+        "candidate",
+        "Notice can be reduced to 30 days.",
+        session_id=session_id,
+    )
+
+    updated = storage.advance_phase(session_id=session_id)
+    assert updated["workflow"]["current_phase"] == "NEGOTIATION"
+
+
+def test_round2_rfi_requires_counterparty_new_subtopic(tmp_path, monkeypatch):
+    configure_repo(tmp_path, monkeypatch)
+    session_id = "rfi-round2-scope"
+    storage.save_state(build_state(current_phase="NEGOTIATION"), session_id=session_id)
+    storage.add_subtopic(
+        "main-compensation",
+        "company",
+        "Signing bonus",
+        "Round 2 incentive",
+        "2000 EUR one-off",
+        3,
+        False,
+        "First proposal",
+        session_id=session_id,
+    )
+    storage.save_round_result("NEGOTIATION", {"company": "ok", "candidate": "ok", "summary": "ok"}, session_id=session_id)
+
+    try:
+        storage.create_rfi(
+            "company",
+            "candidate",
+            "Please clarify this topic.",
+            subtopic_id="sub-base-salary",
+            session_id=session_id,
+        )
+    except ValueError as exc:
+        assert "Round 2 RFIs can only reference subtopics introduced in round 2." in str(exc)
+    else:
+        raise AssertionError("Expected round 2 RFIs to be limited to new counterparty subtopics.")
+
+
+def test_summary_generated_suggested_rfi_requires_admin_approval(tmp_path, monkeypatch):
+    configure_repo(tmp_path, monkeypatch)
+    session_id = "auto-rfi-approval"
+    storage.save_state(build_state(), session_id=session_id)
+    summary = """
+## RFIs or clarifications needed
+- [target:candidate] [scope:Base salary] Can the notice period be reduced below 60 days?
+""".strip()
+
+    storage.save_round_result(
+        "ALIGNMENT",
+        {"company": "ok", "candidate": "ok", "summary": summary},
+        session_id=session_id,
+    )
+
+    state = storage.load_state(session_id)
+    suggestions = state.get("suggested_rfis", [])
+    assert len(suggestions) == 1
+    assert suggestions[0]["status"] == "SUGGESTED"
+
+    approved = storage.approve_suggested_rfi(suggestions[0]["id"], session_id=session_id)
+    approved_rfis = [rfi for rfi in approved["rfis"] if rfi["phase"] == "ALIGNMENT"]
+    assert len(approved_rfis) == 1
+    assert approved_rfis[0]["requested_by"] == "system"
+
+    try:
+        storage.advance_phase(session_id=session_id)
+    except ValueError as exc:
+        assert "Open RFI for candidate" in str(exc)
+    else:
+        raise AssertionError("Expected approved suggested RFIs to block round advancement.")
+
+
+def test_summary_generated_suggested_rfi_can_be_dismissed(tmp_path, monkeypatch):
+    configure_repo(tmp_path, monkeypatch)
+    session_id = "auto-rfi-dismiss"
+    storage.save_state(build_state(), session_id=session_id)
+    summary = """
+## RFIs or clarifications needed
+- [target:candidate] [scope:Base salary] Can the notice period be reduced below 60 days?
+""".strip()
+
+    storage.save_round_result(
+        "ALIGNMENT",
+        {"company": "ok", "candidate": "ok", "summary": summary},
+        session_id=session_id,
+    )
+
+    suggested_id = storage.load_state(session_id)["suggested_rfis"][0]["id"]
+    dismissed_state = storage.dismiss_suggested_rfi(suggested_id, session_id=session_id)
+
+    assert dismissed_state["suggested_rfis"][0]["status"] == "DISMISSED"
+    advanced = storage.advance_phase(session_id=session_id)
+    assert advanced["workflow"]["current_phase"] == "NEGOTIATION"

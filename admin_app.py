@@ -1,9 +1,17 @@
 import streamlit as st
 
 from core.negotiation import collect_round_errors, run_single_round
+from core.rfis import get_rfis, get_suggested_rfis
 from core.report import build_report
 from core.snapshots import get_round_snapshots
-from core.storage import load_state, reset_workflow, rewind_phase, save_round_result
+from core.storage import (
+    approve_suggested_rfi,
+    dismiss_suggested_rfi,
+    load_state,
+    reset_workflow,
+    rewind_phase,
+    save_round_result,
+)
 from core.topic_tree import get_sorted_main_topics
 from core.validation import (
     validate_report_inputs,
@@ -29,6 +37,8 @@ current_phase = workflow["current_phase"]
 status = workflow["status"]
 results = state.get("results", {})
 round_snapshots = get_round_snapshots(state)
+current_phase_rfis = get_rfis(state, phase=current_phase)
+current_phase_suggested_rfis = get_suggested_rfis(state, phase=current_phase, status="SUGGESTED")
 
 st.subheader("Negotiation subject")
 st.info(state.get("job_description", "No job description yet."))
@@ -91,6 +101,55 @@ if round_snapshots:
                     st.markdown(snapshot["result"]["summary"])
                 with st.expander("Snapshot data", expanded=False):
                     st.json(snapshot, expanded=False)
+
+if current_phase_rfis:
+    with st.expander("RFIs / Clarifications", expanded=True):
+        unresolved_count = len([rfi for rfi in current_phase_rfis if rfi.get("status") == "OPEN"])
+        st.caption(
+            f"Current phase RFIs: {len(current_phase_rfis)} total"
+            f" | unresolved: {unresolved_count}"
+        )
+        for rfi in current_phase_rfis:
+            scope = f" ({rfi['subtopic_title']})" if rfi.get("subtopic_title") else ""
+            with st.container(border=True):
+                st.markdown(
+                    f"**[{rfi.get('status', '-')}] {rfi.get('requested_by', '-')} -> {rfi.get('target_side', '-')}{scope}**"
+                )
+                st.write(rfi.get("question", "-"))
+                if rfi.get("response"):
+                    st.caption(f"Response: {rfi['response']}")
+                else:
+                    st.caption("Waiting for response.")
+
+if current_phase_suggested_rfis:
+    with st.expander("Suggested RFIs From Summary", expanded=True):
+        st.caption("These suggestions were extracted automatically from the LLM summary. They become blocking only after approval.")
+        for suggestion in current_phase_suggested_rfis:
+            scope = f" ({suggestion['subtopic_title']})" if suggestion.get("subtopic_title") else ""
+            with st.container(border=True):
+                st.markdown(
+                    f"**{suggestion.get('target_side', '-')} {scope}**"
+                )
+                st.write(suggestion.get("question", "-"))
+                if suggestion.get("source_summary"):
+                    st.caption(f"Source: {suggestion['source_summary']}")
+                approve_col, dismiss_col = st.columns(2)
+                with approve_col:
+                    if st.button("Approve suggestion", key=f"approve_suggested_rfi_{suggestion['id']}"):
+                        try:
+                            approve_suggested_rfi(suggestion["id"], session_id=session_id)
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            st.rerun()
+                with dismiss_col:
+                    if st.button("Dismiss suggestion", key=f"dismiss_suggested_rfi_{suggestion['id']}"):
+                        try:
+                            dismiss_suggested_rfi(suggestion["id"], session_id=session_id)
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            st.rerun()
 
 setup_errors = validate_state_for_round(state, current_phase)
 if setup_errors:

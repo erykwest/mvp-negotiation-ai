@@ -1,4 +1,5 @@
 from core.privacy import extract_shared_topic_tree
+from core.rfis import get_rfis
 from core.snapshots import get_latest_round_snapshot
 from core.topic_tree import get_sorted_main_topics, normalize_topic_tree
 from core.validation import validate_report_inputs
@@ -87,6 +88,22 @@ def build_report(data: dict, results: dict) -> str:
                 "",
             ]
         )
+        phase_rfis = get_rfis(data, phase=phase)
+        if phase_rfis:
+            lines.extend(
+                [
+                    "### RFIs and clarifications",
+                ]
+            )
+            for rfi in phase_rfis:
+                scope = f" ({rfi['subtopic_title']})" if rfi.get("subtopic_title") else ""
+                lines.append(
+                    f"- [{rfi.get('status', '-')}] {rfi.get('requested_by', '-')} -> {rfi.get('target_side', '-')}{scope}: "
+                    f"{rfi.get('question', '-') or '-'}"
+                )
+                if rfi.get("response"):
+                    lines.append(f"  - Response: {rfi['response']}")
+            lines.append("")
 
     lines.extend(
         [

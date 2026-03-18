@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.privacy import (
@@ -8,6 +9,19 @@ from core.privacy import (
     extract_private_inputs,
     extract_shared_topic_tree,
     merge_topic_tree_with_private_inputs,
+)
+from core.rfis import (
+    RFI_STATUS_ANSWERED,
+    RFI_SUPPORTED_PHASES,
+    build_rfi,
+    extract_suggested_rfis_from_summary,
+    get_rfis,
+    get_suggested_rfi_by_id,
+    get_suggested_rfis,
+    normalize_rfis,
+    normalize_suggested_rfis,
+    SUGGESTED_RFI_STATUS_APPROVED,
+    SUGGESTED_RFI_STATUS_DISMISSED,
 )
 from core.repository import (
     FileSessionRepository,
@@ -42,6 +56,7 @@ from core.workflow import (
     WORKFLOW_STATE_ROUND_OPEN,
     advance_workflow,
     is_round_open,
+    is_round_review,
     mark_round_review,
     normalize_workflow,
     resettable_workflow_state,
@@ -84,6 +99,44 @@ def load_party_state(side: str, session_id: str | None = None) -> dict:
 def load_round_snapshots(session_id: str | None = None, phase: str | None = None) -> list[dict]:
     state = load_state(session_id)
     return get_round_snapshots(state, phase=phase)
+
+
+def load_rfis(
+    session_id: str | None = None,
+    *,
+    phase: str | None = None,
+    status: str | None = None,
+    requested_by: str | None = None,
+    target_side: str | None = None,
+    subtopic_id: str | None = None,
+) -> list[dict]:
+    state = load_state(session_id)
+    return get_rfis(
+        state,
+        phase=phase,
+        status=status,
+        requested_by=requested_by,
+        target_side=target_side,
+        subtopic_id=subtopic_id,
+    )
+
+
+def load_suggested_rfis(
+    session_id: str | None = None,
+    *,
+    phase: str | None = None,
+    status: str | None = None,
+    target_side: str | None = None,
+    subtopic_id: str | None = None,
+) -> list[dict]:
+    state = load_state(session_id)
+    return get_suggested_rfis(
+        state,
+        phase=phase,
+        status=status,
+        target_side=target_side,
+        subtopic_id=subtopic_id,
+    )
 
 
 def _party_view_side(private_inputs: dict | None) -> str | None:
@@ -197,6 +250,174 @@ def _can_edit_subtopic_position(state: dict, side: str, subtopic: dict) -> bool:
     return False
 
 
+def _eligible_counterparty_rfi_subtopic(state: dict, requested_by: str, target_side: str, subtopic_id: str | None) -> dict:
+    if not subtopic_id:
+        raise ValueError("Round 2 RFIs must target a new counterparty subtopic.")
+
+    _main_topic, subtopic = find_subtopic(state.get("topic_tree", {}), subtopic_id)
+    if subtopic is None:
+        raise ValueError("Subtopic not found.")
+    if subtopic.get("phase_created") != "NEGOTIATION":
+        raise ValueError("Round 2 RFIs can only reference subtopics introduced in round 2.")
+    if subtopic.get("created_by") != target_side:
+        raise ValueError("Round 2 RFIs can only target a subtopic introduced by the counterparty.")
+    if requested_by == target_side:
+        raise ValueError("Round 2 RFIs must be addressed to the counterparty that introduced the topic.")
+    return subtopic
+
+
+def create_rfi(
+    requested_by: str,
+    target_side: str,
+    question: str,
+    *,
+    subtopic_id: str | None = None,
+    session_id: str | None = None,
+) -> dict:
+    state = load_state(session_id)
+    workflow = normalize_workflow(state.get("workflow"))
+    current_phase = workflow.get("current_phase")
+
+    if requested_by not in POSITION_SIDES or target_side not in POSITION_SIDES:
+        raise ValueError("Unknown negotiation side.")
+    if requested_by == target_side:
+        raise ValueError("RFIs must be addressed to the other side.")
+    if not is_round_review(workflow):
+        raise ValueError("RFIs can only be created during round review.")
+    if current_phase not in RFI_SUPPORTED_PHASES:
+        raise ValueError("RFIs are only supported in rounds 1 and 2.")
+
+    normalized_question = str(question or "").strip()
+    if not normalized_question:
+        raise ValueError("RFI question is required.")
+
+    subtopic = None
+    subtopic_title = ""
+    if current_phase == "NEGOTIATION":
+        subtopic = _eligible_counterparty_rfi_subtopic(state, requested_by, target_side, subtopic_id)
+        subtopic_title = subtopic.get("title", "")
+    elif subtopic_id:
+        _main_topic, subtopic = find_subtopic(state.get("topic_tree", {}), subtopic_id)
+        if subtopic is None:
+            raise ValueError("Subtopic not found.")
+        subtopic_title = subtopic.get("title", "")
+
+    rfis = normalize_rfis(state.get("rfis"))
+    rfis.append(
+        build_rfi(
+            phase=current_phase,
+            requested_by=requested_by,
+            target_side=target_side,
+            question=normalized_question,
+            subtopic_id=subtopic_id,
+            subtopic_title=subtopic_title,
+        )
+    )
+    state["rfis"] = rfis
+    return save_state(state, session_id)
+
+
+def answer_rfi(
+    rfi_id: str,
+    side: str,
+    response: str,
+    *,
+    session_id: str | None = None,
+) -> dict:
+    state = load_state(session_id)
+    workflow = normalize_workflow(state.get("workflow"))
+    current_phase = workflow.get("current_phase")
+
+    if side not in POSITION_SIDES:
+        raise ValueError("Unknown negotiation side.")
+    if not is_round_review(workflow):
+        raise ValueError("RFIs can only be answered during round review.")
+
+    normalized_response = str(response or "").strip()
+    if not normalized_response:
+        raise ValueError("RFI response is required.")
+
+    rfis = normalize_rfis(state.get("rfis"))
+    for rfi in rfis:
+        if rfi.get("id") != rfi_id:
+            continue
+        if rfi.get("phase") != current_phase:
+            raise ValueError("Only RFIs for the current review phase can be answered.")
+        if rfi.get("target_side") != side:
+            raise ValueError("Only the target side can answer this RFI.")
+        if rfi.get("status") == RFI_STATUS_ANSWERED:
+            raise ValueError("This RFI has already been answered.")
+
+        rfi["status"] = RFI_STATUS_ANSWERED
+        rfi["response"] = normalized_response
+        rfi["answered_at"] = datetime.now(timezone.utc).isoformat()
+        state["rfis"] = rfis
+        return save_state(state, session_id)
+
+    raise ValueError("RFI not found.")
+
+
+def approve_suggested_rfi(suggested_rfi_id: str, *, session_id: str | None = None) -> dict:
+    state = load_state(session_id)
+    workflow = normalize_workflow(state.get("workflow"))
+    current_phase = workflow.get("current_phase")
+    if not is_round_review(workflow):
+        raise ValueError("Suggested RFIs can only be approved during round review.")
+
+    suggestion = get_suggested_rfi_by_id(state, suggested_rfi_id)
+    if suggestion is None:
+        raise ValueError("Suggested RFI not found.")
+    if suggestion.get("phase") != current_phase:
+        raise ValueError("Only suggestions for the current review phase can be approved.")
+    if suggestion.get("status") != "SUGGESTED":
+        raise ValueError("This suggested RFI is no longer pending approval.")
+
+    rfis = normalize_rfis(state.get("rfis"))
+    rfis.append(
+        build_rfi(
+            phase=suggestion.get("phase", current_phase),
+            requested_by="system",
+            target_side=suggestion.get("target_side", "candidate"),
+            question=suggestion.get("question", ""),
+            subtopic_id=suggestion.get("subtopic_id"),
+            subtopic_title=suggestion.get("subtopic_title", ""),
+        )
+    )
+    suggestions = normalize_suggested_rfis(state.get("suggested_rfis"))
+    for existing_suggestion in suggestions:
+        if existing_suggestion.get("id") == suggested_rfi_id:
+            existing_suggestion["status"] = SUGGESTED_RFI_STATUS_APPROVED
+            existing_suggestion["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            break
+
+    state["rfis"] = rfis
+    state["suggested_rfis"] = suggestions
+    return save_state(state, session_id)
+
+
+def dismiss_suggested_rfi(suggested_rfi_id: str, *, session_id: str | None = None) -> dict:
+    state = load_state(session_id)
+    workflow = normalize_workflow(state.get("workflow"))
+    current_phase = workflow.get("current_phase")
+    if not is_round_review(workflow):
+        raise ValueError("Suggested RFIs can only be dismissed during round review.")
+
+    suggestions = normalize_suggested_rfis(state.get("suggested_rfis"))
+    for suggestion in suggestions:
+        if suggestion.get("id") != suggested_rfi_id:
+            continue
+        if suggestion.get("phase") != current_phase:
+            raise ValueError("Only suggestions for the current review phase can be dismissed.")
+        if suggestion.get("status") != "SUGGESTED":
+            raise ValueError("This suggested RFI is no longer pending approval.")
+        suggestion["status"] = SUGGESTED_RFI_STATUS_DISMISSED
+        suggestion["resolved_at"] = datetime.now(timezone.utc).isoformat()
+        state["suggested_rfis"] = suggestions
+        return save_state(state, session_id)
+
+    raise ValueError("Suggested RFI not found.")
+
+
 def save_company(payload: dict, session_id: str | None = None) -> dict:
     state = load_state(session_id)
     if "job_description" in payload:
@@ -259,6 +480,18 @@ def save_round_result(phase: str, result: dict, session_id: str | None = None) -
     state = load_state(session_id)
     state["results"][phase] = result
     state["workflow"] = mark_round_review(state.get("workflow"), phase)
+    existing_suggestions = [
+        suggestion
+        for suggestion in normalize_suggested_rfis(state.get("suggested_rfis"))
+        if suggestion.get("phase") != phase
+    ]
+    generated_suggestions = extract_suggested_rfis_from_summary(
+        result.get("summary", ""),
+        phase,
+        state.get("topic_tree", {}),
+        state=state,
+    )
+    state["suggested_rfis"] = existing_suggestions + generated_suggestions
     append_round_snapshot(state, phase, result)
     return save_state(state, session_id)
 
@@ -284,6 +517,11 @@ def rewind_phase(session_id: str | None = None) -> dict:
     # Going back is a test/debug action: clear results from the reopened round onward.
     for phase in PHASES[current_index - 1 :]:
         state.get("results", {}).pop(phase, None)
+    state["suggested_rfis"] = [
+        suggestion
+        for suggestion in normalize_suggested_rfis(state.get("suggested_rfis"))
+        if suggestion.get("phase") not in PHASES[current_index - 1 :]
+    ]
 
     return save_state(state, session_id)
 
@@ -293,6 +531,8 @@ def reset_workflow(session_id: str | None = None) -> dict:
     state["workflow"] = resettable_workflow_state()
     state["results"] = {}
     state["round_snapshots"] = []
+    state["rfis"] = []
+    state["suggested_rfis"] = []
     state["dynamic_topics"] = []
     state["topic_tree"] = remove_negotiation_subtopics(state.get("topic_tree", {}))
     return save_state(state, session_id)

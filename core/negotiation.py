@@ -1,210 +1,192 @@
-from core.llm_client import ask_llm
+from core.llm_client import (
+    DEFAULT_MODEL_NAME,
+    LLM_ERROR_PREFIX,
+    BaseLLMClient,
+    ask_llm,
+    format_llm_error_message,
+    is_llm_error,
+)
+from core.topic_tree import get_sorted_main_topics, normalize_topic_tree
+from core.validation import validate_state_for_round
 
 
-def format_priorities(priorities: dict, side: str) -> str:
-    labels = {
-        "salary": "Salary",
-        "smart": "Smart work",
-        "bonus": "Bonus",
-        "car": "Car",
-        "benefits": "Benefits",
-    }
-
+def format_topic_tree_for_prompt(topic_tree: dict) -> str:
+    normalized_tree = normalize_topic_tree(topic_tree)
     lines = []
-    for key, label in labels.items():
-        value = priorities.get(key, {}).get(side, 3)
-        lines.append(f"- {label}: priorità {value}/5")
-    return "\n".join(lines)
+    for main_topic in get_sorted_main_topics(normalized_tree):
+        if main_topic.get("is_other") and not main_topic.get("subtopics"):
+            continue
 
-
-def format_dynamic_topics(dynamic_topics: list) -> str:
-    if not dynamic_topics:
-        return "Nessun topic aggiuntivo."
-
-    lines = []
-    for t in dynamic_topics:
         lines.append(
-            f"- [{t['section']}] {t['title']}\n"
-            f"  - azienda: {t.get('company_answer', '-')}\n"
-            f"  - candidato: {t.get('candidate_answer', '-')}"
+            f"## {main_topic['title']} "
+            f"(company priority: {main_topic['priorities'].get('company', '-')}/5, "
+            f"candidate priority: {main_topic['priorities'].get('candidate', '-')}/5)"
         )
-    return "\n".join(lines)
+        if main_topic.get("description"):
+            lines.append(main_topic["description"])
+
+        for subtopic in main_topic.get("subtopics", []):
+            company_position = subtopic.get("positions", {}).get("company", {})
+            candidate_position = subtopic.get("positions", {}).get("candidate", {})
+            lines.extend(
+                [
+                    f"- {subtopic['title']}",
+                    f"  - Description: {subtopic.get('description', '-') or '-'}",
+                    f"  - Company: {company_position.get('value', '-') or '-'}",
+                    f"  - Company priority: {company_position.get('priority', '-')}/5",
+                    f"  - Company deal breaker: {'yes' if company_position.get('deal_breaker') else 'no'}",
+                    f"  - Company notes: {company_position.get('notes', '-') or '-'}",
+                    f"  - Candidate: {candidate_position.get('value', '-') or '-'}",
+                    f"  - Candidate priority: {candidate_position.get('priority', '-')}/5",
+                    f"  - Candidate deal breaker: {'yes' if candidate_position.get('deal_breaker') else 'no'}",
+                    f"  - Candidate notes: {candidate_position.get('notes', '-') or '-'}",
+                    f"  - Created in phase: {subtopic.get('phase_created', '-')}",
+                ]
+            )
+
+        lines.append("")
+
+    return "\n".join(lines).strip() or "No topics configured."
 
 
 def build_company_prompt(data: dict, phase: str) -> str:
-    company = data["company"]
-    candidate = data["candidate"]
-    priorities = data.get("priorities", {})
-    dynamic_topics = data.get("dynamic_topics", [])
-
-    dynamic_block = ""
-    if phase in ["NEGOTIATION", "CLOSING"]:
-        dynamic_block = f"""
-
-TOPIC AGGIUNTIVI ROUND 2:
-{format_dynamic_topics(dynamic_topics)}
-"""
-
     return f"""
-FASE: {phase}
+PHASE: {phase}
 
-RUOLO:
-Sei il negoziatore dell'azienda.
-Devi difendere gli interessi dell'azienda senza chiudere la porta a un accordo ragionevole.
+ROLE:
+You are the company's negotiator.
+Protect the company's interests without closing the door on a reasonable agreement.
 
-CONTESTO COMUNE:
+NEGOTIATION SUBJECT:
 {data["job_description"]}
 
-DATI AZIENDA:
-- Nome: {company["name"]}
-- Salary: {company["salary"]}
-- Smart: {company["smart"]}
-- Bonus: {company["bonus"]}
-- Car: {company["car"]}
-- Benefits: {company["benefits"]}
+PARTIES:
+- Company: {data.get("company", {}).get("name", "-")}
+- Candidate: {data.get("candidate", {}).get("name", "-")}
 
-RICHIESTE CANDIDATO:
-- Salary: {candidate["salary"]}
-- Smart: {candidate["smart"]}
-- Bonus: {candidate["bonus"]}
-- Car: {candidate["car"]}
-- Benefits: {candidate["benefits"]}
+TOPIC TREE:
+{format_topic_tree_for_prompt(data.get("topic_tree", {}))}
 
-PRIORITÀ AZIENDA:
-{format_priorities(priorities, "company")}
-
-PRIORITÀ CANDIDATO:
-{format_priorities(priorities, "candidate")}{dynamic_block}
-
-ISTRUZIONI:
-- Scrivi in modo sintetico e professionale.
-- Evidenzia cosa è accettabile, cosa è negoziabile e cosa è critico.
-- Dai più peso ai topic con priorità 4 o 5.
-- Accetta più facilmente compromessi sui topic con priorità 1 o 2.
-- Non inventare dati non presenti.
-- Massimo 250 parole.
+INSTRUCTIONS:
+- Write in a concise, professional tone.
+- Highlight what is acceptable, negotiable, and critical.
+- Give more weight to topics and subtopics with higher priority.
+- Pay close attention to deal breakers.
+- Do not invent missing facts.
+- Maximum 250 words.
 """.strip()
 
 
 def build_candidate_prompt(data: dict, phase: str) -> str:
-    company = data["company"]
-    candidate = data["candidate"]
-    priorities = data.get("priorities", {})
-    dynamic_topics = data.get("dynamic_topics", [])
-
-    dynamic_block = ""
-    if phase in ["NEGOTIATION", "CLOSING"]:
-        dynamic_block = f"""
-
-TOPIC AGGIUNTIVI ROUND 2:
-{format_dynamic_topics(dynamic_topics)}
-"""
-
     return f"""
-FASE: {phase}
+PHASE: {phase}
 
-RUOLO:
-Sei il negoziatore del candidato.
-Devi massimizzare il valore complessivo dell'offerta senza rompere inutilmente la trattativa.
+ROLE:
+You are the candidate's negotiator.
+Maximize the overall value of the offer without breaking the negotiation unnecessarily.
 
-CONTESTO COMUNE:
+NEGOTIATION SUBJECT:
 {data["job_description"]}
 
-DATI CANDIDATO:
-- Nome: {candidate["name"]}
-- Salary: {candidate["salary"]}
-- Smart: {candidate["smart"]}
-- Bonus: {candidate["bonus"]}
-- Car: {candidate["car"]}
-- Benefits: {candidate["benefits"]}
+PARTIES:
+- Company: {data.get("company", {}).get("name", "-")}
+- Candidate: {data.get("candidate", {}).get("name", "-")}
 
-OFFERTA AZIENDA:
-- Salary: {company["salary"]}
-- Smart: {company["smart"]}
-- Bonus: {company["bonus"]}
-- Car: {company["car"]}
-- Benefits: {company["benefits"]}
+TOPIC TREE:
+{format_topic_tree_for_prompt(data.get("topic_tree", {}))}
 
-PRIORITÀ AZIENDA:
-{format_priorities(priorities, "company")}
-
-PRIORITÀ CANDIDATO:
-{format_priorities(priorities, "candidate")}{dynamic_block}
-
-ISTRUZIONI:
-- Scrivi in modo sintetico e professionale.
-- Evidenzia cosa è accettabile, cosa è negoziabile e cosa è critico.
-- Dai più peso ai topic con priorità 4 o 5.
-- Accetta più facilmente compromessi sui topic con priorità 1 o 2.
-- Non inventare dati non presenti.
-- Massimo 250 parole.
+INSTRUCTIONS:
+- Write in a concise, professional tone.
+- Highlight what is acceptable, negotiable, and critical.
+- Give more weight to topics and subtopics with higher priority.
+- Pay close attention to deal breakers.
+- Do not invent missing facts.
+- Maximum 250 words.
 """.strip()
 
 
-def build_summary_prompt(
-    phase: str, company_response: str, candidate_response: str
-) -> str:
+def build_summary_prompt(phase: str, company_response: str, candidate_response: str) -> str:
     return f"""
-FASE: {phase}
+PHASE: {phase}
 
-Sei un analista neutrale.
-Leggi le due posizioni e produci SOLO un report markdown strutturato.
+You are a neutral analyst.
+Read both negotiation positions and produce ONLY a structured markdown report.
 
-POSIZIONE AZIENDA:
+COMPANY POSITION:
 {company_response}
 
-POSIZIONE CANDIDATO:
+CANDIDATE POSITION:
 {candidate_response}
 
-OUTPUT OBBLIGATORIO:
+REQUIRED OUTPUT:
 
-## Obiettivo del round
-(max 2 righe)
+## Round objective
+(max 2 lines)
 
-## Punti allineati
+## Aligned points
 - ...
 
-## Punti in conflitto
+## Conflicts
 - ...
 
-## Concessioni / aperture azienda
+## Company concessions or openings
 - ...
 
-## Concessioni / aperture candidato
+## Candidate concessions or openings
 - ...
 
-## RFI / chiarimenti necessari
+## RFIs or clarifications needed
 - ...
 
-## Prossima mossa consigliata
-(max 3 righe)
+## Recommended next move
+(max 3 lines)
 
-REGOLE:
-- niente introduzioni
-- niente saluti
-- niente testo narrativo lungo
-- massimo 180 parole
+RULES:
+- no introduction
+- no greetings
+- no long narrative
+- maximum 180 words
 """.strip()
 
 
-def safe_ask(prompt: str) -> str:
+def safe_ask(
+    prompt: str,
+    model: str = DEFAULT_MODEL_NAME,
+    client: BaseLLMClient | None = None,
+) -> str:
     try:
-        return ask_llm(prompt)
+        return ask_llm(prompt, model=model, client=client)
     except Exception as exc:
-        return f"ERRORE LLM: {exc}"
+        return format_llm_error_message(str(exc))
 
 
-def run_single_round(data: dict, phase: str) -> dict:
+def collect_round_errors(result: dict) -> list[str]:
+    errors = []
+    for field in ("company", "candidate", "summary"):
+        content = result.get(field, "")
+        if is_llm_error(content):
+            errors.append(f"{field.title()} response failed: {content[len(LLM_ERROR_PREFIX):].strip()}")
+    return errors
+
+
+def run_single_round(
+    data: dict,
+    phase: str,
+    client: BaseLLMClient | None = None,
+    model: str = DEFAULT_MODEL_NAME,
+) -> dict:
+    errors = validate_state_for_round(data, phase)
+    if errors:
+        raise ValueError("; ".join(errors))
+
     company_prompt = build_company_prompt(data, phase)
     candidate_prompt = build_candidate_prompt(data, phase)
 
-    company_response = safe_ask(company_prompt)
-    candidate_response = safe_ask(candidate_prompt)
+    company_response = safe_ask(company_prompt, model=model, client=client)
+    candidate_response = safe_ask(candidate_prompt, model=model, client=client)
 
-    summary_prompt = build_summary_prompt(
-        phase, company_response, candidate_response
-    )
-    summary_response = safe_ask(summary_prompt)
+    summary_prompt = build_summary_prompt(phase, company_response, candidate_response)
+    summary_response = safe_ask(summary_prompt, model=model, client=client)
 
     return {
         "company": company_response,
@@ -213,11 +195,15 @@ def run_single_round(data: dict, phase: str) -> dict:
     }
 
 
-def run_rounds(data: dict) -> dict:
+def run_rounds(
+    data: dict,
+    client: BaseLLMClient | None = None,
+    model: str = DEFAULT_MODEL_NAME,
+) -> dict:
     phases = ["ALIGNMENT", "NEGOTIATION", "CLOSING"]
     results = {}
 
     for phase in phases:
-        results[phase] = run_single_round(data, phase)
+        results[phase] = run_single_round(data, phase, client=client, model=model)
 
     return results

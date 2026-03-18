@@ -1,22 +1,27 @@
 import streamlit as st
 
-st.title("01 · Input negoziazione")
+st.title("01 - Legacy input")
+st.caption("Legacy prototype page. Prefer the role-based apps for current workflows.")
 
-if st.button("Carica dati demo"):
+if st.button("Load demo data"):
     st.session_state["demo_data"] = {
-        "job_description": "TechNova cerca un BIM Coordinator senior per progetti industriali. Ruolo ibrido, coordinamento modelli, clash detection, ACC, supporto al team di progettazione e interfaccia con PM.",
+        "job_description": (
+            "TechNova is hiring a senior BIM Coordinator for industrial projects. "
+            "Hybrid role covering model coordination, clash detection, ACC, support for the design team, "
+            "and collaboration with project managers."
+        ),
         "company_name": "TechNova Engineering",
         "company_salary": "42000",
-        "company_smart": "Ibrido",
-        "company_bonus": "Bonus annuale 8%",
-        "company_car": "Sì",
-        "company_benefits": "Ticket 8€, assicurazione sanitaria, laptop, telefono",
+        "company_smart": "Hybrid",
+        "company_bonus": "Annual bonus 8%",
+        "company_car": "Yes",
+        "company_benefits": "Meal tickets, health insurance, laptop, phone",
         "candidate_name": "Marco Rinaldi",
         "candidate_salary": "48000",
         "candidate_smart": "Full remote",
-        "candidate_bonus": "Bonus performance 10%",
-        "candidate_car": "Sì",
-        "candidate_benefits": "Ticket 8€, formazione, assicurazione, auto uso promiscuo",
+        "candidate_bonus": "Performance bonus 10%",
+        "candidate_car": "Yes",
+        "candidate_benefits": "Meal tickets, training, insurance, mixed-use car",
         "priorities": {
             "salary": {"company": 3, "candidate": 5},
             "smart": {"company": 3, "candidate": 4},
@@ -30,89 +35,77 @@ if st.button("Carica dati demo"):
 demo = st.session_state.get("demo_data", {})
 demo_priorities = demo.get("priorities", {})
 
-smart_options = ["Nessuno", "Ibrido", "Full remote"]
-car_options = ["No", "Sì"]
+smart_options = ["None", "Hybrid", "Full remote"]
+car_options = ["No", "Yes"]
 
 with st.form("negotiation_form"):
-    st.subheader("Documento comune")
+    st.subheader("Shared document")
     job_description = st.text_area(
-        "Job description / contesto comune",
+        "Job description / shared context",
         value=demo.get("job_description", ""),
         height=180,
-        placeholder="Inserisci il contesto comune della negoziazione...",
+        placeholder="Enter the shared negotiation context...",
     )
 
-    st.subheader("Azienda")
-    company_name = st.text_input(
-        "Nome azienda",
-        value=demo.get("company_name", "Azienda")
-    )
-    company_salary = st.text_input(
-        "RAL offerta",
-        value=demo.get("company_salary", "40000")
-    )
+    st.subheader("Company")
+    company_name = st.text_input("Company name", value=demo.get("company_name", "Company"))
+    company_salary = st.text_input("Offered salary", value=demo.get("company_salary", "40000"))
     company_smart = st.selectbox(
         "Smart work",
         smart_options,
-        index=smart_options.index(demo.get("company_smart", "Ibrido"))
+        index=smart_options.index(demo.get("company_smart", "Hybrid")),
     )
-    company_bonus = st.text_input(
-        "Bonus",
-        value=demo.get("company_bonus", "Bonus annuale")
-    )
+    company_bonus = st.text_input("Bonus", value=demo.get("company_bonus", "Annual bonus"))
     company_car = st.selectbox(
-        "Auto aziendale",
+        "Company car",
         car_options,
-        index=car_options.index(demo.get("company_car", "No"))
+        index=car_options.index(demo.get("company_car", "No")),
     )
     company_benefits = st.text_input(
-        "Benefit",
-        value=demo.get("company_benefits", "Ticket, assicurazione")
+        "Benefits",
+        value=demo.get("company_benefits", "Meal tickets, insurance"),
     )
 
-    st.subheader("Candidato")
-    candidate_name = st.text_input(
-        "Nome candidato",
-        value=demo.get("candidate_name", "Candidato")
-    )
+    st.subheader("Candidate")
+    candidate_name = st.text_input("Candidate name", value=demo.get("candidate_name", "Candidate"))
     candidate_salary = st.text_input(
-        "RAL desiderata",
-        value=demo.get("candidate_salary", "45000")
+        "Desired salary",
+        value=demo.get("candidate_salary", "45000"),
     )
     candidate_smart = st.selectbox(
-        "Smart work desiderato",
+        "Desired smart work",
         smart_options,
-        index=smart_options.index(demo.get("candidate_smart", "Ibrido"))
+        index=smart_options.index(demo.get("candidate_smart", "Hybrid")),
     )
     candidate_bonus = st.text_input(
-        "Bonus desiderato",
-        value=demo.get("candidate_bonus", "Bonus performance")
+        "Desired bonus",
+        value=demo.get("candidate_bonus", "Performance bonus"),
     )
     candidate_car = st.selectbox(
-        "Auto aziendale desiderata",
+        "Desired company car",
         car_options,
-        index=car_options.index(demo.get("candidate_car", "No"))
+        index=car_options.index(demo.get("candidate_car", "No")),
     )
     candidate_benefits = st.text_input(
-        "Benefit desiderati",
-        value=demo.get("candidate_benefits", "Ticket, formazione")
+        "Desired benefits",
+        value=demo.get("candidate_benefits", "Meal tickets, training"),
     )
 
-    st.subheader("Priorità topic (1–5)")
+    st.subheader("Topic priorities (1-5)")
 
     topics = [
-        ("salary", "Compenso"),
+        ("salary", "Compensation"),
         ("smart", "Smart work"),
         ("bonus", "Bonus"),
-        ("car", "Auto aziendale"),
-        ("benefits", "Benefit"),
+        ("car", "Company car"),
+        ("benefits", "Benefits"),
     ]
 
     for topic_key, topic_label in topics:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.caption(f"{topic_label} · Priorità azienda")
+            st.caption(f"{topic_label} - Company priority")
             st.feedback(
                 "stars",
                 key=f"prio_company_{topic_key}",
@@ -120,14 +113,14 @@ with st.form("negotiation_form"):
             )
 
         with col2:
-            st.caption(f"{topic_label} · Priorità candidato")
+            st.caption(f"{topic_label} - Candidate priority")
             st.feedback(
                 "stars",
                 key=f"prio_candidate_{topic_key}",
                 default=demo_priorities.get(topic_key, {}).get("candidate", 3) - 1,
             )
 
-    submitted = st.form_submit_button("Salva input")
+    submitted = st.form_submit_button("Save input")
 
 if submitted:
     st.session_state["negotiation_data"] = {
@@ -171,4 +164,4 @@ if submitted:
             },
         },
     }
-    st.success("Input salvato. Vai alla pagina 02 · Rounds.")
+    st.success("Input saved. Move to page 02 - Rounds.")

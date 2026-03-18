@@ -1,1 +1,3 @@
-# 02 Prd Mvp
+# PRD MVP
+
+Minimal viable negotiation assistant.

@@ -1,1 +1,234 @@
-{}
+{
+  "template_id": "recruiting_v1",
+  "template_name": "Recruiting Negotiation Template",
+  "domain": "recruiting",
+  "version": "1.0.0",
+  "mvp_constraints": {
+    "max_parties": 2,
+    "max_sections": 5,
+    "max_topics_per_section": 5,
+    "max_standard_rounds": 3,
+    "last_call_enabled": true,
+    "topic_additions_allowed_until_round": 1,
+    "priority_scale": {
+      "min": 1,
+      "max": 5
+    },
+    "deal_breaker_type": "boolean"
+  },
+  "rounds": [
+    {
+      "id": 1,
+      "key": "alignment",
+      "label": "Round 1 - Alignment"
+    },
+    {
+      "id": 2,
+      "key": "requests",
+      "label": "Round 2 - Requests"
+    },
+    {
+      "id": 3,
+      "key": "agreement",
+      "label": "Round 3 - Agreement"
+    },
+    {
+      "id": 4,
+      "key": "last_call",
+      "label": "Round 4 - Last Call",
+      "optional": true
+    }
+  ],
+  "topic_schema": {
+    "fields": [
+      "topic_id",
+      "label",
+      "canonical_name",
+      "description",
+      "value_type",
+      "unit",
+      "current_value",
+      "preferred_value",
+      "min_acceptable",
+      "max_acceptable",
+      "priority",
+      "deal_breaker",
+      "notes",
+      "shareability"
+    ],
+    "allowed_value_types": [
+      "text",
+      "number",
+      "range",
+      "boolean",
+      "single_select"
+    ],
+    "allowed_shareability": [
+      "private",
+      "shared",
+      "derived_shared"
+    ]
+  },
+  "sections": [
+    {
+      "section_id": "role_responsibilities",
+      "label": "Role & Responsibilities",
+      "description": "Scope of role, title, seniority and expected responsibilities.",
+      "allow_extra_topics": true,
+      "topics": [
+        {
+          "topic_id": "job_title",
+          "label": "Job Title",
+          "canonical_name": "job_title",
+          "description": "Official title or role naming.",
+          "value_type": "text",
+          "unit": null
+        },
+        {
+          "topic_id": "seniority_level",
+          "label": "Seniority Level",
+          "canonical_name": "seniority_level",
+          "description": "Expected seniority or experience level.",
+          "value_type": "single_select",
+          "unit": null
+        },
+        {
+          "topic_id": "main_responsibilities",
+          "label": "Main Responsibilities",
+          "canonical_name": "main_responsibilities",
+          "description": "Core tasks and ownership areas.",
+          "value_type": "text",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "section_id": "compensation",
+      "label": "Compensation",
+      "description": "Fixed and variable compensation elements.",
+      "allow_extra_topics": true,
+      "topics": [
+        {
+          "topic_id": "base_salary",
+          "label": "Base Salary",
+          "canonical_name": "base_salary",
+          "description": "Main fixed compensation.",
+          "value_type": "range",
+          "unit": "currency_per_year"
+        },
+        {
+          "topic_id": "bonus",
+          "label": "Bonus",
+          "canonical_name": "bonus",
+          "description": "Variable compensation or performance bonus.",
+          "value_type": "range",
+          "unit": "currency_per_year"
+        },
+        {
+          "topic_id": "salary_review",
+          "label": "Salary Review",
+          "canonical_name": "salary_review",
+          "description": "Timing and conditions of salary review.",
+          "value_type": "text",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "section_id": "work_mode",
+      "label": "Work Mode",
+      "description": "Workplace presence, remote policy and schedule expectations.",
+      "allow_extra_topics": true,
+      "topics": [
+        {
+          "topic_id": "remote_hybrid_mode",
+          "label": "Remote / Hybrid Mode",
+          "canonical_name": "remote_hybrid_mode",
+          "description": "On-site, hybrid, or remote arrangement.",
+          "value_type": "single_select",
+          "unit": null
+        },
+        {
+          "topic_id": "weekly_presence",
+          "label": "Weekly Presence",
+          "canonical_name": "weekly_presence",
+          "description": "Expected office days per week.",
+          "value_type": "range",
+          "unit": "days_per_week"
+        },
+        {
+          "topic_id": "working_hours_flexibility",
+          "label": "Working Hours Flexibility",
+          "canonical_name": "working_hours_flexibility",
+          "description": "Flexibility in start/end times or schedule.",
+          "value_type": "text",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "section_id": "benefits",
+      "label": "Benefits",
+      "description": "Non-cash compensation and additional conditions.",
+      "allow_extra_topics": true,
+      "topics": [
+        {
+          "topic_id": "health_welfare",
+          "label": "Health / Welfare",
+          "canonical_name": "health_welfare",
+          "description": "Insurance, healthcare, or welfare package.",
+          "value_type": "text",
+          "unit": null
+        },
+        {
+          "topic_id": "time_off",
+          "label": "Time Off",
+          "canonical_name": "time_off",
+          "description": "Vacation, leave, and flexibility arrangements.",
+          "value_type": "text",
+          "unit": null
+        },
+        {
+          "topic_id": "mobility_support",
+          "label": "Mobility Support",
+          "canonical_name": "mobility_support",
+          "description": "Car allowance, company car, or commute support.",
+          "value_type": "text",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "section_id": "tools_equipment",
+      "label": "Tools & Equipment",
+      "description": "Devices, software and operational support.",
+      "allow_extra_topics": true,
+      "topics": [
+        {
+          "topic_id": "hardware",
+          "label": "Hardware",
+          "canonical_name": "hardware",
+          "description": "Laptop, workstation, phone, or similar equipment.",
+          "value_type": "text",
+          "unit": null
+        },
+        {
+          "topic_id": "software_access",
+          "label": "Software Access",
+          "canonical_name": "software_access",
+          "description": "Tools, licenses and platform access.",
+          "value_type": "text",
+          "unit": null
+        },
+        {
+          "topic_id": "training_support",
+          "label": "Training Support",
+          "canonical_name": "training_support",
+          "description": "Onboarding, learning budget or mentoring support.",
+          "value_type": "text",
+          "unit": null
+        }
+      ]
+    }
+  ]
+}

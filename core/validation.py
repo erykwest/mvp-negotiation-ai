@@ -1,4 +1,5 @@
 from core.llm_client import is_llm_error
+from core.intraround_loop import NEGOTIATION_PHASE
 from core.rfis import get_rfis
 from core.topic_tree import (
     OTHER_MAIN_TOPIC_ID,
@@ -149,6 +150,29 @@ def validate_review_readiness(state: dict, phase: str, result: dict | None) -> l
         question = rfi.get("question", "").strip() or "Untitled RFI"
         errors.append(f"Open RFI for {target_side}: {question}")
 
+    errors.extend(validate_intraround_loop(result.get("loop"), phase))
+
+    return errors
+
+
+def validate_intraround_loop(loop: object, phase: str) -> list[str]:
+    if phase != NEGOTIATION_PHASE or loop is None:
+        return []
+
+    if not isinstance(loop, dict):
+        return ["NEGOTIATION result contains a malformed intra-round loop artifact."]
+
+    errors: list[str] = []
+    for field in ("status", "stop_reason"):
+        value = loop.get(field)
+        if value is not None and not isinstance(value, str):
+            errors.append(f"NEGOTIATION loop artifact field '{field}' must be a string.")
+
+    for field in ("agreements", "open_issues", "suggested_rfis", "cycles"):
+        value = loop.get(field)
+        if value is not None and not isinstance(value, list):
+            errors.append(f"NEGOTIATION loop artifact field '{field}' must be a list.")
+
     return errors
 
 
@@ -168,5 +192,7 @@ def validate_report_inputs(state: dict, results: dict) -> list[str]:
                 errors.append(f"Report result for {phase} is missing '{field}'.")
             elif is_llm_error(result.get(field, "")):
                 errors.append(f"Report result for {phase} contains an LLM failure in '{field}'.")
+
+        errors.extend(validate_intraround_loop(result.get("loop"), phase))
 
     return errors

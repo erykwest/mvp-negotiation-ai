@@ -16,7 +16,7 @@ from core.storage import (
 )
 from core.topic_tree import OTHER_MAIN_TOPIC_ID, get_sorted_main_topics, has_locked_template_structure
 from core.workflow import PHASE_LABELS, is_round_open, is_round_review, workflow_state_label
-from ui_helpers import get_session_id
+from ui_helpers import build_negotiation_loop_summary, get_session_id
 
 
 def priority_default(priority: int | None) -> int | None:
@@ -95,6 +95,11 @@ if is_round_review(workflow):
     st.info("A round is complete. You can update company inputs before the next round.")
 else:
     st.caption("Your priorities, deal breakers, and notes stay private until they are turned into shared round outputs.")
+
+loop_summary = build_negotiation_loop_summary(state)
+if loop_summary:
+    with st.expander("Intra-round loop", expanded=False):
+        st.markdown(loop_summary)
 
 with st.form("company_metadata_form"):
     job_description = st.text_area(

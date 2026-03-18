@@ -29,7 +29,7 @@ from core.repository import (
     generate_session_id,
     normalize_session_id,
 )
-from core.snapshots import append_round_snapshot, get_round_snapshots
+from core.snapshots import append_round_snapshot, get_latest_round_snapshot, get_round_snapshots, prune_round_snapshots
 from core.topic_tree import (
     OTHER_MAIN_TOPIC_ID,
     build_main_topic,
@@ -99,6 +99,63 @@ def load_party_state(side: str, session_id: str | None = None) -> dict:
 def load_round_snapshots(session_id: str | None = None, phase: str | None = None) -> list[dict]:
     state = load_state(session_id)
     return get_round_snapshots(state, phase=phase)
+
+
+def get_latest_loop_artifact(state: dict, phase: str = "NEGOTIATION") -> dict | None:
+    if not isinstance(state, dict):
+        return None
+
+    resolved_phase = str(phase or "NEGOTIATION").strip() or "NEGOTIATION"
+
+    results = state.get("results") or {}
+    if isinstance(results, dict):
+        current_result = results.get(resolved_phase)
+        if isinstance(current_result, dict):
+            loop = current_result.get("loop")
+            if isinstance(loop, dict):
+                return deepcopy(loop)
+
+    latest_snapshot = get_latest_round_snapshot(state, resolved_phase)
+    if latest_snapshot:
+        snapshot_result = latest_snapshot.get("result")
+        if isinstance(snapshot_result, dict):
+            loop = snapshot_result.get("loop")
+            if isinstance(loop, dict):
+                return deepcopy(loop)
+
+    return None
+
+
+def _prune_round_artifacts(state: dict, removed_phases: object) -> dict:
+    normalized_phases = {
+        str(phase).strip()
+        for phase in (removed_phases or [])
+        if str(phase).strip()
+    }
+    if not normalized_phases:
+        return state
+
+    results = state.get("results")
+    if isinstance(results, dict):
+        for phase in normalized_phases:
+            results.pop(phase, None)
+    else:
+        state["results"] = {}
+
+    shared_outputs = state.get("shared_outputs")
+    if isinstance(shared_outputs, dict):
+        shared_results = shared_outputs.get("results")
+        if not isinstance(shared_results, dict):
+            shared_results = {}
+        for phase in normalized_phases:
+            shared_results.pop(phase, None)
+        shared_outputs["results"] = shared_results
+        state["shared_outputs"] = shared_outputs
+    else:
+        state["shared_outputs"] = {"results": {}}
+
+    state["round_snapshots"] = prune_round_snapshots(state.get("round_snapshots"), normalized_phases)
+    return state
 
 
 def load_rfis(
@@ -515,8 +572,7 @@ def rewind_phase(session_id: str | None = None) -> dict:
     state["workflow"] = rewind_workflow(state.get("workflow"))
 
     # Going back is a test/debug action: clear results from the reopened round onward.
-    for phase in PHASES[current_index - 1 :]:
-        state.get("results", {}).pop(phase, None)
+    state = _prune_round_artifacts(state, PHASES[current_index - 1 :])
     state["suggested_rfis"] = [
         suggestion
         for suggestion in normalize_suggested_rfis(state.get("suggested_rfis"))
@@ -529,8 +585,7 @@ def rewind_phase(session_id: str | None = None) -> dict:
 def reset_workflow(session_id: str | None = None) -> dict:
     state = load_state(session_id)
     state["workflow"] = resettable_workflow_state()
-    state["results"] = {}
-    state["round_snapshots"] = []
+    state = _prune_round_artifacts(state, PHASES)
     state["rfis"] = []
     state["suggested_rfis"] = []
     state["dynamic_topics"] = []

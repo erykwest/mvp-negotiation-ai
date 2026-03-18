@@ -74,3 +74,15 @@ def get_latest_round_snapshot(state: dict, phase: str) -> dict | None:
     if not snapshots:
         return None
     return snapshots[-1]
+
+
+def prune_round_snapshots(round_snapshots: list[dict] | None, removed_phases: object) -> list[dict]:
+    normalized_phases = {
+        str(phase).strip()
+        for phase in (removed_phases or [])
+        if str(phase).strip()
+    }
+    snapshots = normalize_round_snapshots(round_snapshots)
+    if not normalized_phases:
+        return snapshots
+    return [snapshot for snapshot in snapshots if snapshot.get("phase") not in normalized_phases]

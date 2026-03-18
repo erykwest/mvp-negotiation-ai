@@ -3,11 +3,12 @@ import streamlit as st
 from core.negotiation import collect_round_errors, run_single_round
 from core.rfis import get_rfis, get_suggested_rfis
 from core.report import build_report
-from core.snapshots import get_round_snapshots
 from core.storage import (
     approve_suggested_rfi,
     dismiss_suggested_rfi,
+    get_latest_loop_artifact,
     load_state,
+    load_round_snapshots,
     reset_workflow,
     rewind_phase,
     save_round_result,
@@ -30,15 +31,67 @@ from ui_helpers import get_session_id
 st.set_page_config(page_title="Admin", layout="wide")
 st.title("Admin / Negotiation Runner")
 
+
+def _render_loop_artifact(loop: dict | None) -> None:
+    if not loop:
+        st.caption("No intra-round loop captured.")
+        return
+
+    st.caption(
+        f"Loop status: {loop.get('status', '-')}"
+        f" | stop reason: {loop.get('stop_reason', '-')}"
+        f" | cycles: {len(loop.get('cycles', []))}/{loop.get('max_cycles', '-')}"
+    )
+    if loop.get("generated_at"):
+        st.caption(f"Generated at: {loop['generated_at']}")
+
+    if loop.get("draft_summary"):
+        st.markdown("**Draft summary**")
+        st.write(loop["draft_summary"])
+
+    if loop.get("agreements"):
+        st.markdown("**Agreements**")
+        for item in loop["agreements"]:
+            st.write(f"- {item}")
+
+    if loop.get("open_issues"):
+        st.markdown("**Open issues**")
+        for item in loop["open_issues"]:
+            st.write(f"- {item}")
+
+    cycles = loop.get("cycles") or []
+    if cycles:
+        st.markdown("**Transcript**")
+        for cycle in cycles:
+            company_turn = cycle.get("company_turn", {})
+            candidate_turn = cycle.get("candidate_turn", {})
+            analyst_decision = cycle.get("analyst_decision", {})
+            with st.container(border=True):
+                st.markdown(f"Cycle {cycle.get('cycle', '-')}")
+                st.caption(
+                    f"Analyst action: {analyst_decision.get('action', '-')}"
+                    f" | reason: {analyst_decision.get('reason', '-') or '-'}"
+                )
+                st.markdown("Company turn")
+                st.code(company_turn.get("raw") or company_turn.get("message") or "-", language="text")
+                st.markdown("Candidate turn")
+                st.code(candidate_turn.get("raw") or candidate_turn.get("message") or "-", language="text")
+
+
+def _should_render_negotiation_loop_in_completed_rounds(current_phase: str, render_in_review: bool) -> bool:
+    return current_phase == "NEGOTIATION" and not render_in_review
+
 session_id = get_session_id(st, "admin")
 state = load_state(session_id)
 workflow = state["workflow"]
 current_phase = workflow["current_phase"]
 status = workflow["status"]
 results = state.get("results", {})
-round_snapshots = get_round_snapshots(state)
+round_snapshots = load_round_snapshots(session_id)
 current_phase_rfis = get_rfis(state, phase=current_phase)
 current_phase_suggested_rfis = get_suggested_rfis(state, phase=current_phase, status="SUGGESTED")
+negotiation_loop = get_latest_loop_artifact(state, "NEGOTIATION")
+render_negotiation_loop_in_review = current_phase == "NEGOTIATION" and is_round_review(workflow)
 
 st.subheader("Negotiation subject")
 st.info(state.get("job_description", "No job description yet."))
@@ -201,6 +254,10 @@ if is_round_review(workflow):
                 for error in round_errors:
                     st.write(f"- {error}")
 
+    if render_negotiation_loop_in_review:
+        with st.expander("Intra-round loop", expanded=True):
+            _render_loop_artifact(negotiation_loop)
+
     if current_phase != "CLOSING":
         can_advance = not review_errors
         for error in review_errors:
@@ -226,6 +283,9 @@ if results:
 
         with st.expander(PHASE_LABELS[phase], expanded=False):
             st.markdown(results[phase]["summary"])
+            if _should_render_negotiation_loop_in_completed_rounds(phase, render_negotiation_loop_in_review):
+                with st.expander("Intra-round loop", expanded=False):
+                    _render_loop_artifact(negotiation_loop)
 
     report_errors = validate_report_inputs(state, results)
     if report_errors:

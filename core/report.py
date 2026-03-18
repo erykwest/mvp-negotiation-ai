@@ -26,6 +26,61 @@ def _render_topic_tree(topic_tree: dict) -> list[str]:
     return lines
 
 
+def _render_loop_text_list(values: object) -> list[str]:
+    if not isinstance(values, (list, tuple, set)):
+        return []
+
+    lines: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
+def _render_loop_suggested_rfis(values: object) -> list[str]:
+    if not isinstance(values, (list, tuple, set)):
+        return []
+
+    lines: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            target_side = str(value.get("target_side", "-")).strip() or "-"
+            scope = str(value.get("scope", value.get("subtopic_title", "general"))).strip() or "general"
+            question = str(value.get("question", "-")).strip() or "-"
+            lines.append(f"- {target_side} | {scope}: {question}")
+            continue
+
+        text = str(value or "").strip()
+        if text:
+            lines.append(f"- {text}")
+    return lines
+
+
+def _render_loop_artifact(loop: dict) -> list[str]:
+    status = str(loop.get("status", "-")).strip() or "-"
+    stop_reason = str(loop.get("stop_reason", "-")).strip() or "-"
+    agreements = _render_loop_text_list(loop.get("agreements"))
+    open_issues = _render_loop_text_list(loop.get("open_issues"))
+    suggested_rfis = _render_loop_suggested_rfis(loop.get("suggested_rfis"))
+
+    lines = [
+        "### Intra-round loop",
+        f"- Status: `{status}`",
+        f"- Stop reason: `{stop_reason}`",
+        f"- Agreements: {', '.join(agreements) if agreements else 'None'}",
+        f"- Open issues: {', '.join(open_issues) if open_issues else 'None'}",
+    ]
+    if suggested_rfis:
+        lines.append("- Suggested RFIs:")
+        lines.extend(f"  {item}" for item in suggested_rfis)
+    else:
+        lines.append("- Suggested RFIs: None")
+
+    lines.append("")
+    return lines
+
+
 def build_report(data: dict, results: dict) -> str:
     errors = validate_report_inputs(data, results)
     if errors:
@@ -88,6 +143,9 @@ def build_report(data: dict, results: dict) -> str:
                 "",
             ]
         )
+        if phase == "NEGOTIATION" and isinstance(round_content.get("loop"), dict):
+            lines.extend(_render_loop_artifact(round_content["loop"]))
+
         phase_rfis = get_rfis(data, phase=phase)
         if phase_rfis:
             lines.extend(

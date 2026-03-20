@@ -16,7 +16,7 @@ from core.storage import (
 )
 from core.topic_tree import OTHER_MAIN_TOPIC_ID, get_sorted_main_topics, has_locked_template_structure
 from core.workflow import PHASE_LABELS, is_round_open, is_round_review, workflow_state_label
-from ui_helpers import build_negotiation_loop_summary, get_session_id
+from ui_helpers import build_negotiation_loop_summary, get_session_id, render_test_preset_controls
 
 
 def priority_default(priority: int | None) -> int | None:
@@ -123,6 +123,8 @@ if save_metadata:
     )
     st.success("Company metadata saved.")
     st.rerun()
+
+render_test_preset_controls(st, "company", session_id, workflow)
 
 st.divider()
 if is_round_review(workflow):

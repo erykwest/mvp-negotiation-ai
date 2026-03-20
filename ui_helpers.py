@@ -2,6 +2,7 @@ from pathlib import Path
 
 from core.intraround_loop import normalize_loop_artifact
 from core.repository import generate_session_id, normalize_session_id
+from core.session_presets import apply_session_preset
 from core.storage import get_session_file_path
 
 
@@ -101,3 +102,61 @@ def get_session_id(st, namespace: str) -> str:
     st.sidebar.caption("Copy this Session ID or share the page URL to keep everyone on the same negotiation.")
     st.sidebar.caption(f"Storage file: `{session_file.as_posix()}`")
     return normalized
+
+
+def render_test_preset_controls(
+    st,
+    side: str,
+    session_id: str,
+    workflow: dict,
+    *,
+    allow_round_1_reset: bool = True,
+) -> None:
+    current_phase = str((workflow or {}).get("current_phase") or "ALIGNMENT").upper()
+    round_2_disabled = current_phase != "NEGOTIATION"
+    round_state = str((workflow or {}).get("status") or "").upper()
+
+    with st.expander("Test presets", expanded=False):
+        if allow_round_1_reset:
+            st.caption(
+                "Quick-fill realistic test data for QA. Round 1 resets the whole session into a clean "
+                "baseline; Round 2 only adds the delta for the current side and keeps existing Round 1 inputs."
+            )
+        else:
+            st.caption(
+                "Quick-fill realistic test data for QA. This interface can only add the Round 2 delta "
+                "for the current side; full session reset stays available from company/admin."
+            )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if allow_round_1_reset:
+                if st.button("Reset session with Round 1 preset", key=f"{side}_preset_round1"):
+                    try:
+                        apply_session_preset(side, "round1", session_id=session_id)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success("Session reset with the Round 1 preset.")
+                        st.rerun()
+            else:
+                st.caption("Round 1 reset is disabled on this side.")
+
+        with col2:
+            if st.button(
+                "Load Round 2 delta",
+                key=f"{side}_preset_round2",
+                disabled=round_2_disabled,
+            ):
+                try:
+                    apply_session_preset(side, "round2", session_id=session_id)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Round 2 delta loaded for the current side.")
+                    st.rerun()
+
+        if round_2_disabled:
+            st.caption("Round 2 delta becomes available once the workflow is on round 2.")
+        elif round_state != "ROUND_REVIEW":
+            st.caption("Round 2 delta updates topics and priorities now; preset RFIs are only seeded during round review.")

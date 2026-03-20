@@ -13,7 +13,7 @@ from core.storage import (
 )
 from core.topic_tree import get_sorted_main_topics
 from core.workflow import PHASE_LABELS, is_round_open, is_round_review, workflow_state_label
-from ui_helpers import build_negotiation_loop_summary, get_session_id
+from ui_helpers import build_negotiation_loop_summary, get_session_id, render_test_preset_controls
 
 
 def priority_default(priority: int | None) -> int | None:
@@ -110,6 +110,8 @@ if save_metadata:
     )
     st.success("Candidate metadata saved.")
     st.rerun()
+
+render_test_preset_controls(st, "candidate", session_id, workflow, allow_round_1_reset=False)
 
 st.divider()
 if is_round_review(workflow):

@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.postgres_repository import PostgresSessionRepository
 from core.privacy import (
     build_empty_private_inputs,
     build_party_topic_tree_view,
@@ -65,9 +66,22 @@ from core.workflow import (
 
 DEFAULT_SESSION_ID = "session_001"
 DATA_DIR = Path(os.environ.get("NEGOTIATION_DATA_DIR", "data"))
-SESSION_FILE = DATA_DIR / f"{DEFAULT_SESSION_ID}.json"
 
-_repository: SessionRepository = FileSessionRepository(DATA_DIR)
+
+def _configured_storage_backend() -> str:
+    backend = str(os.environ.get("NEGOTIATION_STORAGE_BACKEND", "file") or "file").strip().lower()
+    if backend in {"supabase", "postgres", "db", "database"}:
+        return "supabase"
+    return "file"
+
+
+def _build_repository() -> SessionRepository:
+    if _configured_storage_backend() == "supabase":
+        return PostgresSessionRepository()
+    return FileSessionRepository(DATA_DIR)
+
+
+_repository: SessionRepository = _build_repository()
 
 
 def get_current_session_id(session_id: str | None = None) -> str:
@@ -78,8 +92,8 @@ def create_session_id(prefix: str = "session") -> str:
     return generate_session_id(prefix=prefix)
 
 
-def get_session_file_path(session_id: str | None = None) -> Path:
-    return _repository.session_file(get_current_session_id(session_id))
+def get_storage_backend_name() -> str:
+    return _configured_storage_backend()
 
 
 def load_state(session_id: str | None = None) -> dict:

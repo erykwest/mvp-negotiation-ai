@@ -1,9 +1,6 @@
-from pathlib import Path
-
 from core.intraround_loop import normalize_loop_artifact
 from core.repository import generate_session_id, normalize_session_id
 from core.session_presets import apply_session_preset
-from core.storage import get_session_file_path
 
 
 def _as_text(value: object) -> str:
@@ -97,10 +94,9 @@ def get_session_id(st, namespace: str) -> str:
     normalized = normalize_session_id(session_value)
     st.query_params["session"] = normalized
 
-    session_file = Path(get_session_file_path(normalized))
     st.sidebar.code(normalized)
     st.sidebar.caption("Copy this Session ID or share the page URL to keep everyone on the same negotiation.")
-    st.sidebar.caption(f"Storage file: `{session_file.as_posix()}`")
+    st.sidebar.caption("Session data is stored according to the active backend.")
     return normalized
 
 
